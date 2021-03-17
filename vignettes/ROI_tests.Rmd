@@ -21,6 +21,7 @@ library(xcms)
 library(magrittr)
 library(dplyr)
 library(data.table)
+library(RHermes)
 ```
 
 ```{r Testing the modified ROI-generating function}
