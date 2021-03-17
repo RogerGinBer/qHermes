@@ -2,5 +2,6 @@
 
 export("%>%")
 export(centWave_orig)
+export(findSOIpeaks)
 import(data.table)
 importFrom(magrittr,"%>%")

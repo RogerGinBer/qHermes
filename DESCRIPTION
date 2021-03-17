@@ -23,7 +23,8 @@ Imports:
     data.table,
     magrittr,
     dplyr,
-    mzR
+    mzR,
+    BiocParallel
 Suggests: 
     knitr,
     rmarkdown
