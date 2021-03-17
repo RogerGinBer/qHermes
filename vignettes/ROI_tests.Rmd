@@ -1,0 +1,164 @@
+---
+title: "ROI_tests"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ROI_tests}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(XCHermes)
+library(mzR)
+library(xcms)
+library(magrittr)
+library(dplyr)
+library(data.table)
+```
+
+```{r Testing the modified ROI-generating function}
+file <- "D:/HermesResults/Ecoli/MS1_positive/UNL_Ecoli_MS1_pos_70-1000_01.mzML"
+data <- openMSfile(file)
+h <- header(data)
+pks <- do.call(rbind, peaks(data))
+#' ## Get m/z and intensity values
+
+mzs <- pks[,1]
+ints <- pks[,2]
+
+## Define the values per spectrum:
+valsPerSpect <- h$peaksCount
+scant <- h$retentionTime
+
+roi <- centWave_orig(mzs, ints, scant, valsPerSpect,
+                      ppm = 3, prefilter = c(3,100),
+                          peakwidth = c(10,60),
+                          mzdiff = -1e-2,
+                          snthresh = 6,
+                          noise = 0)
+roi <- do.call(rbind, roi)
+roi <- apply(roi, 2, as.numeric)
+roi <- as.data.frame(roi)
+
+#Johannes, is this the correct way to recover the RT values from scmin and scmax?
+roi <-  mutate(roi, rtmin = scant[scmin]) %>%
+    mutate(., rtmax = scant[scmax]) %>%
+    mutate(., rtlength = rtmax - rtmin)
+```
+
+
+
+```{r Calculating SOI-ROI overlap (Figure 2 of preprint)}
+raw  <- RHermes:::import_and_filter(file)[[3]]
+cnt <- 0
+pkscans <- list()
+
+#Takes a few mins, pretty slow overall because it's filtering a huge dataframe
+#over an over again
+for (j in 1:nrow(roi)) {
+    if(j%%100 == 0){print(j)}
+    j <- roi[j,]
+    rt1 <- j$rtmin; rt2 <- j$rtmax
+    mz1 <- j$mzmin; mz2 <- j$mzmax
+    cur_scans <- filter(raw, between(mz, mz1, mz2) &
+                            between(rt, rt1, rt2))
+    cnt <- cnt + nrow(cur_scans)
+    pkscans <- c(pkscans, list(cur_scans))
+
+}
+pkscans <- rbindlist(pkscans)
+res <- list(pkscans = pkscans)
+
+
+total <- nrow(PL(ecoliPos,2)@raw)
+anotated <- nrow(PL(ecoliPos,2)@peaklist %>% distinct())
+crude <- select(SOI(ecoliPos, 2)@PlotDF, c("rtiv", "rt")) %>% distinct() %>% nrow()
+clean <-  select(SOI(ecoliPos, 5)@PlotDF,c("rtiv", "rt")) %>% distinct() %>% nrow()
+
+print(paste("A", round(nrow(res$pkscans)/total*100, 3),
+            "% of all acquired data points have an associated XCMS peak"))
+
+#Intersection with peaklist, which contains all "annotated data points" but where SOI
+#have not been detected yet.
+intersection <- dplyr::intersect(res$pkscans,
+                                 select(PL(ecoliPos, 2)@peaklist,
+                                        c("mz", "rtiv", "rt")))
+anot_percentage <- nrow(intersection) / nrow(res$pkscans) * 100
+
+print(paste("Only", round(anot_percentage,2),
+            "% of XCMS peak data points have an",
+            "ionic formula annotation present in ECMDB+KEGG"))
+
+#Intersection with "crude" SOI list that doesn't have blank substraction, refining, etc.
+crudeSOIintersection <- dplyr::intersect(select(res$pkscans, c("rtiv", "rt")),
+                                         select(SOI(ecoliPos, 2)@PlotDF,
+                                                c("rtiv", "rt")))
+crudeSOIpercentage <- nrow(crudeSOIintersection) / nrow(res$pkscans) * 100
+print(paste("Only", round(crudeSOIpercentage,2),
+            "% of XCMS peak data points are",
+            "represented in the crude SOI list"))
+
+#Intersection with "definitive" SOI list that goes to IL
+SOIintersection <- dplyr::intersect(select(res$pkscans, c("rtiv", "rt")),
+                                    select(SOI(ecoliPos, 5)@PlotDF,
+                                        c("rtiv", "rt")))
+SOI_percentage <- nrow(SOIintersection) / nrow(res$pkscans) * 100
+print(paste("Only", round(SOI_percentage,2),
+            "% of XCMS peak data points are",
+            "represented in the final SOI list"))
+
+xs <- c(0, clean/total, crude/total, anotated/total, 1)
+ys <- c(nrow(SOIintersection)/clean,
+        (nrow(crudeSOIintersection) - nrow(SOIintersection))/(total * (xs[3]-xs[2])),
+        (nrow(intersection) - nrow(crudeSOIintersection))/(total * (xs[4]-xs[3])),
+        (nrow(res$pkscans) - nrow(intersection))/(total * (xs[5]-xs[4])))
+
+
+p <- ggplot() 
+
+p <- p + geom_rect(aes(xmin=0,xmax=1,min=0,max=1), alpha = 0.2, fill = "grey90") +
+            geom_rect(aes(xmin=xs[1], xmax=xs[2], ymin = 0, ymax = 1), fill = "darkred", alpha = 0.5) +
+            geom_rect(aes(xmin=xs[2], xmax=xs[3], ymin = 0, ymax = 1), fill = "red", alpha = 0.5) +
+            geom_rect(aes(xmin=xs[3], xmax=xs[4], ymin = 0, ymax = 1), fill = "pink", alpha = 0.5)
+
+p <- p + geom_rect(aes(xmin=xs[1], xmax=xs[2], ymin = 0, ymax = ys[1]), fill = "blue", alpha = 0.3) +
+    geom_rect(aes(xmin=xs[2], xmax=xs[3], ymin = 0, ymax = ys[2]), fill = "blue", alpha = 0.3) +
+    geom_rect(aes(xmin=xs[3], xmax=xs[4], ymin = 0, ymax = ys[3]), fill = "blue", alpha = 0.3) +
+    geom_rect(aes(xmin=xs[4], xmax=xs[5], ymin = 0, ymax = ys[4]), fill = "blue", alpha = 0.3)
+
+p <- p +
+    theme_minimal() + theme(axis.text = element_blank(),axis.ticks = element_blank(), panel.grid = element_blank())
+p
+```
+
+You can find the HermesResults in our
+[Zenodo](https://zenodo.org/record/4581662) 
+
+```{r Annotating the ROIs}
+ecoliPos <- readRDS("D:/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
+ionf <- ecoliPos@metadata@ExpParam@ionF[[1]]
+
+#Anotate the ROIs -> Really fast
+roi$anot <- sapply(roi$mz, function(mz){
+    an <- paste(ionf$f[(abs(ionf$m - mz) <= mz*ppm*1e-6)])
+    if(length(an) == 0){return(NA)}
+    return(an)
+})
+
+scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect)
+roi$pks <- apply(roi, 1, function(x){
+    eic <- .Call("getEIC", mzs, ints, scanindex, as.double(c(x[2], x[3])),
+                     as.integer(c(x[4],x[5])), as.integer(length(scanindex)),
+                     PACKAGE = "xcms") 
+})
+
+roi <- roi[!is.na(roi$anot),]
+```
+

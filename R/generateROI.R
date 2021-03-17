@@ -1,0 +1,166 @@
+
+#Modified version of the internal Centwave detection that only generates ROIs
+#' @export
+centWave_orig <- function(mz, int, scantime, valsPerSpect,
+                           ppm = 25, peakwidth = c(20,50), snthresh = 10,
+                           prefilter = c(3,100), mzCenterFun = "wMean",
+                           integrate = 1, mzdiff = -0.001, fitgauss = FALSE,
+                           noise = 0, ## noise.local=TRUE,
+                           sleep = 0, verboseColumns = FALSE, roiList = list(),
+                           firstBaselineCheck = TRUE, roiScales = NULL,
+                           extendLengthMSW = FALSE) {
+    ## Input argument checking.
+    if (missing(mz) | missing(int) | missing(scantime) | missing(valsPerSpect))
+        stop("Arguments 'mz', 'int', 'scantime' and 'valsPerSpect'",
+             " are required!")
+    if (length(mz) != length(int) | length(valsPerSpect) != length(scantime)
+        | length(mz) != sum(valsPerSpect))
+        stop("Lengths of 'mz', 'int' and of 'scantime','valsPerSpect'",
+             " have to match. Also, 'length(mz)' should be equal to",
+             " 'sum(valsPerSpect)'.")
+    scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect) ## Get index vector for C calls
+    if (!is.double(mz))
+        mz <- as.double(mz)
+    if (!is.double(int))
+        int <- as.double(int)
+    ## Fix the mzCenterFun
+    # mzCenterFun <- paste("mzCenter",
+    #                      gsub(mzCenterFun, pattern = "mzCenter.",
+    #                           replacement = "", fixed = TRUE), sep=".")
+    # if (!exists(mzCenterFun, mode="function"))
+    #     stop("Function '", mzCenterFun, "' not defined !")
+
+    if (!is.logical(firstBaselineCheck))
+        stop("Parameter 'firstBaselineCheck' should be logical!")
+    if (length(firstBaselineCheck) != 1)
+        stop("Parameter 'firstBaselineCheck' should be a single logical !")
+    if (length(roiScales) > 0)
+        if (length(roiScales) != length(roiList) | !is.numeric(roiScales))
+            stop("If provided, parameter 'roiScales' has to be a numeric with",
+                 " length equal to the length of 'roiList'!")
+    ## if (!is.null(roiScales)) {
+    ##     if (!is.numeric(roiScales) | length(roiScales) != length(roiList))
+    ##         stop("Parameter 'roiScales' has to be a numeric of length equal to",
+    ##              " parameter 'roiList'!")
+    ##}
+
+    basenames <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax",
+                   "into", "intb", "maxo", "sn")
+    verbosenames <- c("egauss", "mu", "sigma", "h", "f", "dppm", "scale",
+                      "scpos", "scmin", "scmax", "lmin", "lmax")
+
+    ## Peak width: seconds to scales
+    scalerange <- round((peakwidth / mean(diff(scantime))) / 2)
+
+    if (length(z <- which(scalerange == 0)))
+        scalerange <- scalerange[-z]
+    if (length(scalerange) < 1) {
+        warning("No scales? Please check peak width!")
+        if (verboseColumns) {
+            nopeaks <- matrix(nrow = 0, ncol = length(basenames) +
+                                            length(verbosenames))
+            colnames(nopeaks) <- c(basenames, verbosenames)
+        } else {
+            nopeaks <- matrix(nrow = 0, ncol = length(basenames))
+            colnames(nopeaks) <- c(basenames)
+        }
+        return(invisible(nopeaks))
+    }
+
+    if (length(scalerange) > 1)
+        scales <- seq(from = scalerange[1], to = scalerange[2], by = 2)
+    else
+        scales <- scalerange
+
+    minPeakWidth <-  scales[1]
+    noiserange <- c(minPeakWidth * 3, max(scales) * 3)
+    maxGaussOverlap <- 0.5
+    minPtsAboveBaseLine <- max(4, minPeakWidth - 2)
+    minCentroids <- minPtsAboveBaseLine
+    scRangeTol <-  maxDescOutlier <- floor(minPeakWidth / 2)
+    scanrange <- c(1, length(scantime))
+
+    ## If no ROIs are supplied then search for them.
+    if (length(roiList) == 0) {
+        message("Detecting mass traces at ", ppm, " ppm ... ", appendLF = FALSE)
+        ## flush.console();
+        ## We're including the findmzROI code in this function to reduce
+        ## the need to copy objects etc.
+        ## We could also sort the data by m/z anyway; wouldn't need that
+        ## much time. Once we're using classes from MSnbase we can be
+        ## sure that values are correctly sorted.
+        withRestarts(
+            tryCatch({
+                tmp <- capture.output(
+                    roiList <- .Call("findmzROI",
+                                     mz, int, scanindex,
+                                     as.double(c(0.0, 0.0)),
+                                     as.integer(scanrange),
+                                     as.integer(length(scantime)),
+                                     as.double(ppm * 1e-6),
+                                     as.integer(minCentroids),
+                                     as.integer(prefilter),
+                                     as.integer(noise),
+                                     PACKAGE ='xcms' )
+                )
+            },
+            error = function(e){
+                if (grepl("m/z sort assumption violated !", e$message)) {
+                    invokeRestart("fixSort")
+                } else {
+                    simpleError(e)
+                }
+            }),
+            fixSort = function() {
+                ## Force ordering of values within spectrum by mz:
+                ##  o split values into a list -> mz per spectrum, intensity per
+                ##    spectrum.
+                ##  o define the ordering.
+                ##  o re-order the mz and intensity and unlist again.
+                ## Note: the Rle split is faster than the "conventional" factor split.
+                splitF <- Rle(1:length(valsPerSpect), valsPerSpect)
+                mzl <- as.list(S4Vectors::split(mz, f = splitF))
+                oidx <- lapply(mzl, order)
+                mz <<- unlist(mapply(mzl, oidx, FUN = function(y, z) {
+                    return(y[z])
+                }, SIMPLIFY = FALSE, USE.NAMES = FALSE), use.names = FALSE)
+                int <<- unlist(mapply(as.list(split(int, f = splitF)), oidx,
+                                      FUN=function(y, z) {
+                                          return(y[z])
+                                      }, SIMPLIFY = FALSE, USE.NAMES = FALSE),
+                               use.names = FALSE)
+                rm(mzl)
+                rm(splitF)
+                tmp <- capture.output(
+                    roiList <<- .Call("findmzROI",
+                                      mz, int, scanindex,
+                                      as.double(c(0.0, 0.0)),
+                                      as.integer(scanrange),
+                                      as.integer(length(scantime)),
+                                      as.double(ppm * 1e-6),
+                                      as.integer(minCentroids),
+                                      as.integer(prefilter),
+                                      as.integer(noise),
+                                      PACKAGE ='xcms' )
+                )
+            }
+        )
+        message("OK")
+        ## ROI.list <- findmzROI(object,scanrange=scanrange,dev=ppm * 1e-6,minCentroids=minCentroids, prefilter=prefilter, noise=noise)
+        if (length(roiList) == 0) {
+            warning("No ROIs found! \n")
+            if (verboseColumns) {
+                nopeaks <- matrix(nrow = 0, ncol = length(basenames) +
+                                                length(verbosenames))
+                colnames(nopeaks) <- c(basenames, verbosenames)
+            } else {
+                nopeaks <- matrix(nrow = 0, ncol = length(basenames))
+                colnames(nopeaks) <- c(basenames)
+            }
+            return(invisible(nopeaks))
+        }
+    }
+    return(roiList)
+}
+
+
