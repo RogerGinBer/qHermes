@@ -24,7 +24,8 @@ Imports:
     magrittr,
     dplyr,
     mzR,
-    BiocParallel
+    BiocParallel,
+    MSnbase
 Suggests: 
     knitr,
     rmarkdown
