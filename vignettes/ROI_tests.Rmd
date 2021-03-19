@@ -17,6 +17,7 @@ knitr::opts_chunk$set(
 ```{r setup}
 library(XCHermes)
 library(mzR)
+library(MSnbase)
 library(xcms)
 library(magrittr)
 library(dplyr)
@@ -161,5 +162,19 @@ roi$pks <- apply(roi, 1, function(x){
 })
 
 roi <- roi[!is.na(roi$anot),]
+```
+
+```{r}
+test <- readMSData(list.files("D:/HermesResults/Ecoli/MS1_positive/", "mzML",
+                              full.names = T)[c(3,6,9)],
+                   mode = "onDisk")
+soi <- findSOIpeaks(test)
+ft <- groupChromPeaks(soi, 
+                    PeakDensityParam(sampleGroups = c("Lab", "Blank", "Unlab"),
+                    minFraction = 0.4, bw = 20))
+ft <- fillChromPeaks(ft, FillChromPeaksParam(ppm=2))
+defs <- featureDefinitions(ft) %>% as.data.frame()
+vals <- featureValues(ft)
+
 ```
 
