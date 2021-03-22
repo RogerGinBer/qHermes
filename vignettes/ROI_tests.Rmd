@@ -166,15 +166,36 @@ roi <- roi[!is.na(roi$anot),]
 
 ```{r}
 test <- readMSData(list.files("D:/HermesResults/Ecoli/MS1_positive/", "mzML",
-                              full.names = T)[c(3,6,9)],
+                              full.names = T)[c(1:9)],
                    mode = "onDisk")
 soi <- findSOIpeaks(test)
 ft <- groupChromPeaks(soi, 
-                    PeakDensityParam(sampleGroups = c("Lab", "Blank", "Unlab"),
-                    minFraction = 0.4, bw = 20))
+                    NearestPeaksParam(sampleGroups = c(rep("Lab",4), rep("Blank",2), rep("Unlab",3)),
+                    absMz = 0.002, absRt = 10))
 ft <- fillChromPeaks(ft, FillChromPeaksParam(ppm=2))
-defs <- featureDefinitions(ft) %>% as.data.frame()
-vals <- featureValues(ft)
+defs <- SOIFeatureDefinitions(ft)
+pca <- prcomp(t(na.omit(defs[,15:23])), scale. = TRUE, center = TRUE)
+ggplot(pca$x%>%as.data.frame)+
+    geom_point(aes(x=PC1, y=PC2))+
+    geom_label(aes(x=PC1, y=PC2, label = rownames(pca$x)))
+
+```
+
+
+```{r faahKO_test}
+library(RHermes)
+library(faahKO)
+library(XCHermes)
+library(xcms)
+
+faahko_3_files <- c(system.file("cdf", "KO", "ko15.CDF", package = "faahKO"),
+                    system.file("cdf", "KO", "ko16.CDF", package = "faahKO"),
+                    system.file("cdf", "KO", "ko18.CDF", package = "faahKO"))
+
+data <- readMSData(faahko_3_files, mode = "onDisk")
+xdata <- findSOIpeaks(data, DBfile = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv")
+xdata <- groupChromPeaks(xdata, NearestPeaksParam())
+
 
 ```
 

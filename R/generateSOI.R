@@ -1,27 +1,37 @@
 #'@import MSnbase
 #'@import RHermes
 #'@export
-findSOIpeaks <- function(MSnExp, DBfile, adfile){
+findSOIpeaks <- function(MSnExp, DBfile = NA,
+                         adfile = NA,
+                         BPPARAM = bpparam(),
+                         SOIParam = getSOIpar()){
     struct <- RHermesExp()
-    struct <- setCluster(struct, BiocParallel::SerialParam())
+    struct <- setCluster(struct, BPPARAM)
     ppm <- struct@metadata@ExpParam@ppm
 
-    #This would be what the end user should do:
-    # struct <- setDB(struct, db = DBfile, adductfile = adfile)
+    #Selecting formulas and adducts
+    if(!is.na(DBfile)){
+        if(!is.na(adfile)){
+            struct <- setDB(struct, db = "custom", filename = DBfile,
+                            adductfile = adfile)
+        } else {
+            struct <- setDB(struct, db = "custom", filename = DBfile)
+        }
+    } else {
+        struct <- setDB(struct)
+    }
     
-    #For testing let's just use the "demo DB" defaults 
-    #(just a few formulas and adducts)
-    struct <- setDB(struct)
     
     prepro <- RHermes:::preprocessing(struct)
     IF_DB <- prepro[[1]]
     IC <- prepro[[2]]
     
     
+    struct <- setCluster(struct, SerialParam())
     files <- fileNames(MSnExp)
-    toAdd <- lapply(seq_along(files), function(i) {
-        cur_MSnExp <- filterFile(MSnExp, i)
-        imported <- extractToHermes(cur_MSnExp)
+    toAdd <- bplapply(seq_along(files), function(i, MSnExp, IF_DB, IC, struct, ppm, files) {
+        cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
+        imported <- XCHermes:::extractToHermes(cur_MSnExp)
         ss <- RHermes:::OptScanSearch(DB = IF_DB[[1]],
                             raw = imported[[3]],
                             ppm = ppm,
@@ -30,15 +40,17 @@ findSOIpeaks <- function(MSnExp, DBfile, adfile){
                             BiocParallelParam = struct@metadata@cluster)
 
         #Construction of S4 Object output
-        RHermesPL(peaklist = ss, header = imported[[2]], raw = imported[[1]],
+        RHermes:::RHermesPL(peaklist = ss, header = imported[[2]], raw = imported[[1]],
                     labelled = FALSE, filename = files[i])
-    })
+    }, BPPARAM = BPPARAM, MSnExp = MSnExp, IF_DB = IF_DB, IC = IC,
+        struct = struct, ppm = ppm, files = files)
     struct@data@PL <- c(struct@data@PL, toAdd)
     struct@metadata@ExpParam@ionF <- IF_DB
     struct@metadata@ExpParam@isoList <- IC
     struct@metadata@filenames <- c(struct@metadata@filenames, files)
     
-    struct <- findSOI(struct, getSOIpar(), fileID = seq_along(files))
+    struct <- setCluster(struct, BPPARAM)
+    struct <- findSOI(struct, SOIParam, fileID = seq_along(files))
     SOIs <- do.call("rbind", lapply(seq_along(files), function(soi){
         soi_list <- struct@data@SOI[[soi]]@SOIList
         
