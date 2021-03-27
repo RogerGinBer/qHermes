@@ -3,10 +3,8 @@
 #'@export
 findSOIpeaks <- function(MSnExp, DBfile = NA,
                          adfile = NA,
-                         BPPARAM = bpparam(),
                          SOIParam = getSOIpar()){
     struct <- RHermesExp()
-    struct <- setCluster(struct, BPPARAM)
     ppm <- struct@metadata@ExpParam@ppm
 
     #Selecting formulas and adducts
@@ -27,7 +25,6 @@ findSOIpeaks <- function(MSnExp, DBfile = NA,
     IC <- prepro[[2]]
     
     
-    struct <- setCluster(struct, SerialParam())
     files <- fileNames(MSnExp)
     toAdd <- bplapply(seq_along(files), function(i, MSnExp, IF_DB, IC, struct, ppm, files) {
         cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
@@ -36,20 +33,18 @@ findSOIpeaks <- function(MSnExp, DBfile = NA,
                             raw = imported[[3]],
                             ppm = ppm,
                             labelled = FALSE,
-                            IsoList = IC,
-                            BiocParallelParam = struct@metadata@cluster)
+                            IsoList = IC)
 
         #Construction of S4 Object output
         RHermes:::RHermesPL(peaklist = ss, header = imported[[2]], raw = imported[[1]],
                     labelled = FALSE, filename = files[i])
-    }, BPPARAM = BPPARAM, MSnExp = MSnExp, IF_DB = IF_DB, IC = IC,
+    }, BPPARAM = bpparam(), MSnExp = MSnExp, IF_DB = IF_DB, IC = IC,
         struct = struct, ppm = ppm, files = files)
     struct@data@PL <- c(struct@data@PL, toAdd)
     struct@metadata@ExpParam@ionF <- IF_DB
     struct@metadata@ExpParam@isoList <- IC
     struct@metadata@filenames <- c(struct@metadata@filenames, files)
     
-    struct <- setCluster(struct, BPPARAM)
     struct <- findSOI(struct, SOIParam, fileID = seq_along(files))
     SOIs <- do.call("rbind", lapply(seq_along(files), function(soi){
         soi_list <- struct@data@SOI[[soi]]@SOIList

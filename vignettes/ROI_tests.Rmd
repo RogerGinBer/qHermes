@@ -193,9 +193,20 @@ faahko_3_files <- c(system.file("cdf", "KO", "ko15.CDF", package = "faahKO"),
                     system.file("cdf", "KO", "ko18.CDF", package = "faahKO"))
 
 data <- readMSData(faahko_3_files, mode = "onDisk")
+Sys.time()
 xdata <- findSOIpeaks(data, DBfile = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv")
-xdata <- groupChromPeaks(xdata, NearestPeaksParam())
+Sys.time()
 
+xdata <- groupChromPeaks(xdata, NearestPeaksParam())
+```
+
+```{r}
+faahko_3_files <- c(system.file("cdf", "KO", "ko15.CDF", package = "faahKO"),
+                    system.file("cdf", "KO", "ko16.CDF", package = "faahKO"),
+                    system.file("cdf", "KO", "ko18.CDF", package = "faahKO"))
+data <- readMSData(faahko_3_files, mode = "onDisk")
+register(SerialParam())
+s <- fastSOI(data)
 
 ```
 

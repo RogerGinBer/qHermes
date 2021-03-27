@@ -3,6 +3,7 @@
 export("%>%")
 export(SOIFeatureDefinitions)
 export(centWave_orig)
+export(fastSOI)
 export(findSOIpeaks)
 import(MSnbase)
 import(RHermes)

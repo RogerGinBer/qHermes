@@ -1,6 +1,5 @@
-annotateROI <- function(object, DBfile = NA, adfile = NA, ppm = 3, BPPARAM = bpparam()){
+annotateROI <- function(object, DBfile = NA, adfile = NA, ppm = 3{
     struct <- RHermesExp()
-    struct <- setCluster(struct, BPPARAM)
     ppm <- struct@metadata@ExpParam@ppm
 
     #Selecting formulas and adducts
