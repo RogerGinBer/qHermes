@@ -2,6 +2,7 @@
 
 export("%>%")
 export(SOIFeatureDefinitions)
+export(annotateROI)
 export(centWave_orig)
 export(fastSOI)
 export(findSOIpeaks)

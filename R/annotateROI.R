@@ -1,3 +1,4 @@
+#'@export
 annotateROI <- function(object, DBfile = NA, adfile = NA, ppm = 3){
     struct <- RHermesExp()
     ppm <- struct@metadata@ExpParam@ppm
