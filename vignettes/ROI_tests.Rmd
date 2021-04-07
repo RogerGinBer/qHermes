@@ -206,6 +206,10 @@ faahko_3_files <- c(system.file("cdf", "KO", "ko15.CDF", package = "faahKO"),
                     system.file("cdf", "KO", "ko18.CDF", package = "faahKO"))
 data <- readMSData(faahko_3_files, mode = "onDisk")
 register(SerialParam())
+xdata <- findChromPeaks(data, CentWaveParam())
+cfp <- ChemFormulaParam(DB = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv",
+                        adlist = MetaboCoreUtils::adductNames("positive"))
+xdata2 <- annotateChromPeaks(xdata, cfp)
 s <- fastSOI(data)
 
 ```

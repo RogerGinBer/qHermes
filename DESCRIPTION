@@ -25,7 +25,8 @@ Imports:
     dplyr,
     mzR,
     BiocParallel,
-    MSnbase
+    MSnbase,
+    MetaboCoreUtils
 Suggests: 
     knitr,
     rmarkdown
