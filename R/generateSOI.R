@@ -10,10 +10,10 @@ findSOIpeaks <- function(MSnExp, DBfile = NA,
     #Selecting formulas and adducts
     if(!is.na(DBfile)){
         if(!is.na(adfile)){
-            struct <- setDB(struct, db = "custom", filename = DBfile,
+            struct <- setDB(struct, db = "custom", DBfile = DBfile,
                             adductfile = adfile)
         } else {
-            struct <- setDB(struct, db = "custom", filename = DBfile)
+            struct <- setDB(struct, db = "custom", DBfile = DBfile)
         }
     } else {
         struct <- setDB(struct)

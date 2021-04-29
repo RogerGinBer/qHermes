@@ -19,35 +19,13 @@ soi_from_eic <- function(eic, thr = 1000, tol = 5){
     return(cbind(scstart = st, scend = end))
 }
 
+#'@importFrom xcms chromPeaks chromPeakData
+#'@importFrom dplyr select rename
+#'@importFrom BiocParallel SerialParam
 #'@export
-fastSOI <- function(MSnExp, ppm = 10, minint = 1000, DBfile = NA, 
-                        adfile = NA){
-    
-    struct <- RHermesExp()
-    struct <- setExpParam(struct, ExpParam(ppm = ppm))
-
-    #Selecting formulas and adducts
-    if(!is.na(DBfile)){
-        if(!is.na(adfile)){
-            struct <- setDB(struct, db = "custom", filename = DBfile,
-                            adductfile = adfile)
-        } else {
-            struct <- setDB(struct, db = "custom", filename = DBfile)
-        }
-    } else {
-        struct <- setDB(struct)
-    }
-    
-    ##Calculating all possible ionic formulas
-    F_DB <- struct@metadata@ExpParam@DB[,c("MolecularFormula", "EnviPatMass")]
-    #Could break if colname isn't exactly "MolecularFormula"
-    F_DB <- dplyr::distinct_at(F_DB, "MolecularFormula",
-                                .keep_all = T)
-    colnames(F_DB) <- c("fms", "m")
-
-    message("Calculating ionic formulas")
-    ionf <- RHermes:::IonicForm(F_DB, struct@metadata@ExpParam@adlist)[[1]]
-    
+fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
+    ppm <- ChemFormulaParam@ppm
+    ionf <- ChemFormulaParam@ionFormulas
     message("Calculating fast SOIs")
     ionf$s <- ionf$m*(1-ppm*1e-6)
     ionf$e <- ionf$m*(1+ppm*1e-6)
@@ -78,24 +56,34 @@ fastSOI <- function(MSnExp, ppm = 10, minint = 1000, DBfile = NA,
             sois <- XCHermes:::soi_from_eic(eic$intensity)
             if(nrow(sois) == 0){return()}
             sois <- as.data.frame(sois)
+            
+            sois$start <- scantime[sois$scstart]
+            sois$end <- scantime[sois$scend]
+            sois$length <- sois$end - sois$start
             sois$formula <- x[1]
-            sois$mz <- x[2]; sois$mzmin <- x[5]; sois$mzmax <- x[6]
             sois$peaks <- apply(sois, 1, function(row){
                 data.frame(rt = scantime[row[1]:row[2]],
                            rtiv = eic$intensity[row[1]:row[2]])
             })
-            sois$rtmin <- scantime[sois$scstart]
-            sois$rtmax <- scantime[sois$scend]
-            sois$into <- sapply(sois$peaks, function(x){sum(x[,2])})
-            sois$intb <- sois$into
-            sois$maxo <- sapply(sois$peaks, function(x){max(x[,2])})
-            sois$rt <- sapply(sois$peaks, function(x){x[which.max(x[,2]),1]})
-
+            sois$mass <- as.numeric(x[2]) 
+            sois <- select(sois, start, end, length, formula, peaks, mass)
             return(sois)
         })
         if(is.null(SL)){return()}
         SL <- do.call("rbind", SL)
-        SL$length <- SL$rtmax-SL$rtmin
+        
+        suppressMessages({
+            SL <- RHermes:::groupShort(SL, maxlen = 30,
+                                    BPPARAM = BiocParallel::SerialParam())
+        })
+        SL <- rename(SL, rtmin = start, rtmax = end, mz = mass)
+        
+        SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-6)
+        SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-6)
+        SL$into <- sapply(SL$peaks, function(x){sum(x[,2])})
+        SL$intb <- SL$into
+        SL$maxo <- sapply(SL$peaks, function(x){max(x[,2])})
+        SL$rt <- sapply(SL$peaks, function(x){x[which.max(x[,2]),1]})
         SL <- SL[SL$length > 5,] #Filter by min time
         SL$sample <- i
         
@@ -109,12 +97,15 @@ fastSOI <- function(MSnExp, ppm = 10, minint = 1000, DBfile = NA,
     MSnExp <- as(MSnExp, "XCMSnExp")
     if (nrow(SOIs) > 0) {
         names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", "into",
-                    "intb", "maxo", "sample")
-        chromPeaks(MSnExp) <- SOIs[, names] %>% as.matrix() %>%
-            apply(., 2, as.numeric)
+                    "intb", "maxo", "sn", "sample")
+        SOIs$sn <- 1e3
+        cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
+        row.names(cp_mat) <- seq(nrow(SOIs))
+        chromPeaks(MSnExp) <- cp_mat
         chromPeakData(MSnExp) <- S4Vectors::DataFrame(SOIs[, 3:11],
-                                                      ms_level = as.integer(1),
-                                                      is_filled = FALSE)
+                                                    ms_level = as.integer(1),
+                                                    is_filled = FALSE,
+                                                    row.names = seq(nrow(SOIs)))
     }
     return(MSnExp)
 }

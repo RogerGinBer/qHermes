@@ -164,24 +164,6 @@ roi$pks <- apply(roi, 1, function(x){
 roi <- roi[!is.na(roi$anot),]
 ```
 
-```{r}
-test <- readMSData(list.files("D:/HermesResults/Ecoli/MS1_positive/", "mzML",
-                              full.names = T)[c(1:9)],
-                   mode = "onDisk")
-soi <- findSOIpeaks(test)
-ft <- groupChromPeaks(soi, 
-                    NearestPeaksParam(sampleGroups = c(rep("Lab",4), rep("Blank",2), rep("Unlab",3)),
-                    absMz = 0.002, absRt = 10))
-ft <- fillChromPeaks(ft, FillChromPeaksParam(ppm=2))
-defs <- SOIFeatureDefinitions(ft)
-pca <- prcomp(t(na.omit(defs[,15:23])), scale. = TRUE, center = TRUE)
-ggplot(pca$x%>%as.data.frame)+
-    geom_point(aes(x=PC1, y=PC2))+
-    geom_label(aes(x=PC1, y=PC2, label = rownames(pca$x)))
-
-```
-
-
 ```{r faahKO_test}
 library(RHermes)
 library(faahKO)
@@ -212,5 +194,19 @@ cfp <- ChemFormulaParam(DB = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv",
 xdata2 <- annotateChromPeaks(xdata, cfp)
 s <- fastSOI(data)
 
+```
+
+
+
+#Testing Fast SOI algorithm
+
+```{r}
+library(XCHermes)
+file <- list.files("D:/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)
+ms <- MSnbase::readMSData(file, mode = "onDisk")
+chem <- ChemFormulaParam(DB = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv", ppm = 3)
+quickSOI <-fastSOI(ms, ChemFormulaParam = chem)
+grouped <- groupChromPeaks(quickSOI, xcms::PeakDensityParam(sampleGroups = c(1,1,1,1,2,2,3,3,3,3), binSize = 0.005, bw = 1))
+df <- xcms::featureDefinitions(grouped) %>% as.data.frame()
 ```
 

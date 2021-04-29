@@ -22,9 +22,8 @@ setMethod("initialize", signature = "ChemFormulaParam",
         }
         struct <- RHermesExp()
         ads <- adducts_MetaboCore_to_Hermes()
-        struct <- setDB(struct, db = "custom", filename = .Object@DB)
+        struct <- setDB(struct, db = "custom", DBfile = .Object@DB)
         struct@metadata@ExpParam@adlist <- ads[ads$adduct %in% .Object@adlist, ]
-        browser()
         prepro <- RHermes:::preprocessing(struct)
         IF_DB <- prepro[[1]]
         IF_DB[[1]] <- IF_DB[[1]][order(IF_DB[[1]]$m),]
