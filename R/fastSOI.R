@@ -110,3 +110,42 @@ fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
     return(MSnExp)
 }
 
+#'@export
+filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
+    cp <- chromPeaks(XCMSnExp)
+    cpdata <- chromPeakData(XCMSnExp)
+    SL <- SOI(RHermesExp, SOI_id)@SOIList
+    unique_ions <- unique(SL$formula)
+    toRemove <- rep(TRUE, nrow(cpdata))
+    FALSE -> toRemove[sapply(cpdata$formula, function(x){x %in% unique_ions})]
+    for(i in which(!toRemove)){
+        matching_sois <- filter(SL, formula == cpdata$formula[[i]])
+        good <- (cp[i, "rtmin"] > matching_sois$start - 20) &
+                (cp[i, "rtmax"] < matching_sois$end + 20)
+        if(!any(good)) toRemove[i] <- TRUE
+    }
+    chromPeaks(XCMSnExp) <- cp[!toRemove,]
+    chromPeakData(XCMSnExp) <- cpdata[!toRemove,]
+    return(XCMSnExp)
+}
+
+#'@export
+plotFeature <- function(XCMSnExp, feature){
+    cp <- chromPeaks(XCMSnExp)
+    cpdata <- chromPeakData(XCMSnExp)%>% as.data.frame
+    ft <- featureDefinitions(XCMSnExp)[feature,] %>% as.data.frame
+    pks <- cpdata[ft$peakidx[[1]], ] 
+    pknames <- fileNames(XCMSnExp)[cp[ft$peakidx[[1]], "sample"]] %>%
+        basename
+    plot_data <- lapply(1:nrow(pks), function(x){
+        pk <- pks$peaks[[x]]
+        pk <- pk[pk$rtiv != 0,]
+        pk$samp <- pknames[x]
+        pk <- rbind(data.frame(rt = min(pk$rt), rtiv = 0, samp = pknames[x]),
+                    pk,
+                    data.frame(rt = max(pk$rt), rtiv = 0, samp = pknames[x]))
+    })
+    plot_data <- do.call(rbind, plot_data)
+    ggplot(plot_data) + geom_polygon(aes(x=rt, y=rtiv, fill = samp),
+                                     alpha = 0.5)
+} 
