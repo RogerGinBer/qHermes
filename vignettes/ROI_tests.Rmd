@@ -210,3 +210,42 @@ grouped <- groupChromPeaks(quickSOI, xcms::PeakDensityParam(sampleGroups = c(1,1
 df <- xcms::featureDefinitions(grouped) %>% as.data.frame()
 ```
 
+#Testing Fast SOI from filtered SOIList
+
+```{r}
+library(XCHermes)
+library(RHermes)
+ecoliPos <- readRDS("D:/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
+fil <- list.files("D:/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)
+ms <- MSnbase::readMSData(fil, mode = "onDisk")
+ecoliPos@data@SOI[[1]]@SOIList <- ecoliPos@data@SOI[[1]]@SOIList[FilterSOIListIndexes,]
+# or another SOIList
+quickSOI <- fastSOIfromList(MSnExp=ms, struct= ecoliPos, SOI_id = 1, rtwin=10)
+
+#followed by xcms workflow of rtalignment -grouping - fillpeaks
+mypeaks <- chromPeaks(quickSOI)
+
+## Initial peak grouping. Use sample_type as grouping variable
+pdp_subs <- PeakDensityParam(sampleGroups = rep(1,length(fil)),
+                             minFraction = 0.9)
+quickSOI <- groupChromPeaks(quickSOI, param = pdp_subs)
+
+## Define subset-alignment options and perform the alignment
+pgp_subs <- PeakGroupsParam(minFraction = 0.85,
+                            # subset = sample(1:length(fil),length(fil)/2),
+                            subsetAdjust = "average", span = 0.4)
+quickSOI <- adjustRtime(quickSOI, param = pgp_subs)
+
+## Perform the correspondence
+pdp <- PeakDensityParam(sampleGroups =  rep(1,length(fil)),
+                        binSize = 0.005,
+                        minFraction = 0.4, bw = 10)
+quickSOI <- groupChromPeaks(quickSOI, param = pdp)
+
+quickSOI <- fillChromPeaks(quickSOI, param = ChromPeakAreaParam())
+
+# res <- quantify(quickSOI, value = "into")
+res <- featureValues(quickSOI)
+feats <- featureDefinitions(quickSOI)
+feats <- as.data.frame(feats)
+```

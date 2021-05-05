@@ -149,3 +149,112 @@ plotFeature <- function(XCMSnExp, feature){
     ggplot(plot_data) + geom_polygon(aes(x=rt, y=rtiv, fill = samp),
                                      alpha = 0.5)
 } 
+
+#'@export
+fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10) 
+{
+  ppm <- struct@metadata@ExpParam@ppm
+  target_list <- RHermes::SOI(struct,SOI_id)@SOIList
+  target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
+  target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
+  files <- fileNames(MSnExp)
+  SOIs <- bplapply(seq_along(files), function(i,MSnExp,target_list,ppm) {
+    cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
+    pks <- extractToHermes(cur_MSnExp)
+    mzs <- unlist(pks[[3]][, 1])
+    ints <- unlist(pks[[3]][, 2])
+    h <- pks[[2]]
+    scantime <- h$retentionTime
+    valsPerSpect <- h$originalPeaksCount
+    scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect)
+    SL <- lapply(seq(nrow(target_list)), function(x) {
+      x <- target_list[x, ]
+      sr <- which(scantime >= (x$start - rtwin) & scantime <= (x$end + rtwin))
+      sr <- c(min(sr),max(sr))
+      eic <- .Call("getEIC", mzs, ints, scanindex, 
+                   as.double(as.numeric(c(x$mmin, x$mmax))), 
+                   as.integer(sr),
+                   as.integer(length(scanindex)), PACKAGE = "xcms")
+      sois <- XCHermes:::soi_from_eic(eic$intensity)
+      sl <- apply(sois, 1, function(x) x[2] - x[1])
+      sois <- sois[which(sl > (x$nscans * 0.5)),,drop=F]
+      if (nrow(sois) == 0) {return()}
+      # Filters that could be possible applied or deleted (Jordi)
+      # smaxint <- apply(sois, 1, function(x) max(eic$intensity[x[1]:x[2]]))
+      # sois <- sois[which(smaxint > 1e4),,drop=F]
+      # if (nrow(sois) == 0) {return()}
+      # if (nrow(sois) >1) {
+      #   xpeaks <- x$peaks[[1]]
+      #   # xpeaks$rt <- floor(xpeaks$rt-min(xpeaks$rt)+1)
+      #   xpeaks$rt <- 1:nrow(xpeaks)
+      #   cossim <- apply(sois,1,function(s){
+      #     eicpeaks <- data.table::data.table("rt"=1:(s[2]-s[1]+1),
+      #                                        "rtiv"=eic$intensity[s[1]:s[2]])
+      #     # eicpeaks$rt <- floor(eicpeaks$rt-min(eicpeaks$rt)+1)
+      #     # plot(eicpeaks,type="l", main="EIC")
+      #     # plot(xpeaks,type="l", main="SOIpeaks")
+      #     RHermes:::cosineSim(xpeaks,eicpeaks)
+      #   })
+      #   # soiSIM per quedarme la soi_eic més semblant?
+      #   sois <- sois[which(cossim > 0.5),, drop = FALSE]
+      #   if (nrow(sois) == 0) {return()}
+      # }
+      sois <- as.data.frame(sois)
+      sois$start <- scantime[sr[1]:sr[2]][sois$scstart]
+      sois$end <- scantime[sr[1]:sr[2]][sois$scend]
+      sois$rt <- sapply(seq(nrow(sois)),function(j) median(scantime[sr[1]:sr[2]][sois$scstart[j]:sois$scend[j]]))
+      sois$length <- sois$end - sois$start
+      sois$formula <- x$formula
+      sois$peaks <- apply(sois, 1, function(row) {
+        data.frame(rt = scantime[row[1]:row[2]],
+                   rtiv = eic$intensity[row[1]:row[2]])
+      })
+      sois$mass <- x$mass
+      sois <- dplyr::select(sois, start, rt, end, length, formula, 
+                            peaks, mass)
+      return(sois)
+    })
+    if (is.null(SL)) {
+      return()
+    }
+    SL <- do.call("rbind", SL)
+    # suppressMessages({
+    #   SL <- RHermes:::groupShort(SL, maxlen = 30, BPPARAM = BiocParallel::SerialParam())
+    # })
+    SL <- dplyr::rename(SL, rtmin = start, rtmax = end, mz = mass)
+    SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-06)
+    SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-06)
+    SL$into <- sapply(SL$peaks, function(x) {
+      sum(x[, 2])
+    })
+    SL$intb <- SL$into
+    SL$maxo <- sapply(SL$peaks, function(x) {
+      max(x[, 2])
+    })
+    SL <- SL[SL$length > 5, ,drop=F]
+    SL$sample <- i
+    return(SL)
+  },
+  MSnExp = MSnExp, target_list = target_list, ppm = ppm,
+  BPPARAM = bpparam()
+  )
+  SOIs <- do.call("rbind", SOIs)
+  row.names(SOIs) <- NULL
+  MSnExp <- as(MSnExp, "XCMSnExp")
+  if (nrow(SOIs) > 0) {
+    names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", 
+               "into", "intb", "maxo", "sn", "sample")
+    SOIs$sn <- 1000
+    cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
+    row.names(cp_mat) <- seq(nrow(SOIs))
+    chromPeaks(MSnExp) <- cp_mat
+    chromPeakData(MSnExp) <- S4Vectors::DataFrame(
+      SOIs[,3:11],
+      ms_level = as.integer(1),
+      is_filled = FALSE,
+      row.names = seq(nrow(SOIs))
+    )
+  }
+  return(MSnExp)
+}
+
