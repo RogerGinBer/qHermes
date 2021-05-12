@@ -15,7 +15,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r setup}
-library(XCHermes)
+library(qHermes)
 library(mzR)
 library(MSnbase)
 library(xcms)
@@ -167,7 +167,7 @@ roi <- roi[!is.na(roi$anot),]
 ```{r faahKO_test}
 library(RHermes)
 library(faahKO)
-library(XCHermes)
+library(qHermes)
 library(xcms)
 
 faahko_3_files <- c(system.file("cdf", "KO", "ko15.CDF", package = "faahKO"),
@@ -201,7 +201,7 @@ s <- fastSOI(data)
 #Testing Fast SOI algorithm
 
 ```{r}
-library(XCHermes)
+library(qHermes)
 file <- list.files("D:/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)
 ms <- MSnbase::readMSData(file, mode = "onDisk")
 chem <- ChemFormulaParam(DB = "D:/HermesResults/Ecoli/merge_KEGG_ECMDB.csv", ppm = 3)
@@ -213,7 +213,7 @@ df <- xcms::featureDefinitions(grouped) %>% as.data.frame()
 #Testing Fast SOI from filtered SOIList
 
 ```{r}
-library(XCHermes)
+library(qHermes)
 library(RHermes)
 ecoliPos <- readRDS("D:/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
 fil <- list.files("D:/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)

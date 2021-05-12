@@ -35,7 +35,7 @@ fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
     SOIs <- bplapply(seq_along(files),
                       function(i) {
         cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-        pks <- XCHermes:::extractToHermes(cur_MSnExp)
+        pks <- qHermes:::extractToHermes(cur_MSnExp)
         mzs <- unlist(pks[[3]][,1])
         ints <- unlist(pks[[3]][,2])
 
@@ -53,7 +53,7 @@ fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
                             as.integer(length(scanindex)),
                             PACKAGE = "xcms")
             if(all(eic$intensity < minint)){return()}
-            sois <- XCHermes:::soi_from_eic(eic$intensity)
+            sois <- qHermes:::soi_from_eic(eic$intensity)
             if(nrow(sois) == 0){return()}
             sois <- as.data.frame(sois)
             
@@ -175,7 +175,7 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10)
                    as.double(as.numeric(c(x$mmin, x$mmax))), 
                    as.integer(sr),
                    as.integer(length(scanindex)), PACKAGE = "xcms")
-      sois <- XCHermes:::soi_from_eic(eic$intensity)
+      sois <- qHermes:::soi_from_eic(eic$intensity)
       sl <- apply(sois, 1, function(x) x[2] - x[1])
       sois <- sois[which(sl > (x$nscans * 0.5)),,drop=F]
       if (nrow(sois) == 0) {return()}

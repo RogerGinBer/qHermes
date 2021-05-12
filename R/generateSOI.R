@@ -28,7 +28,7 @@ findSOIpeaks <- function(MSnExp, DBfile = NA,
     files <- fileNames(MSnExp)
     toAdd <- bplapply(seq_along(files), function(i, MSnExp, IF_DB, IC, struct, ppm, files) {
         cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-        imported <- XCHermes:::extractToHermes(cur_MSnExp)
+        imported <- qHermes:::extractToHermes(cur_MSnExp)
         ss <- RHermes:::OptScanSearch(DB = IF_DB[[1]],
                             raw = imported[[3]],
                             ppm = ppm,
