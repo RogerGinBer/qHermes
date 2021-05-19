@@ -151,16 +151,16 @@ plotFeature <- function(XCMSnExp, feature){
 } 
 
 #'@export
-fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10) 
+fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1000) 
 {
   ppm <- struct@metadata@ExpParam@ppm
   target_list <- RHermes::SOI(struct,SOI_id)@SOIList
   target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
   target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
   files <- fileNames(MSnExp)
-  SOIs <- bplapply(seq_along(files), function(i,MSnExp,target_list,ppm) {
+  SOIs <- bplapply(seq_along(files), function(i,MSnExp,target_list,ppm,rtwin,tol,thr) {
     cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-    pks <- extractToHermes(cur_MSnExp)
+    pks <- XCHermes:::extractToHermes(cur_MSnExp)
     mzs <- unlist(pks[[3]][, 1])
     ints <- unlist(pks[[3]][, 2])
     h <- pks[[2]]
@@ -168,23 +168,24 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10)
     valsPerSpect <- h$originalPeaksCount
     scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect)
     SL <- lapply(seq(nrow(target_list)), function(x) {
-      x <- target_list[x, ]
-      sr <- which(scantime >= (x$start - rtwin) & scantime <= (x$end + rtwin))
+      tgt <- target_list[x, ]
+      sr <- which(scantime >= (tgt$start - rtwin) & scantime <= (tgt$end + rtwin))
       sr <- c(min(sr),max(sr))
       eic <- .Call("getEIC", mzs, ints, scanindex, 
-                   as.double(as.numeric(c(x$mmin, x$mmax))), 
+                   as.double(as.numeric(c(tgt$mmin, tgt$mmax))), 
                    as.integer(sr),
                    as.integer(length(scanindex)), PACKAGE = "xcms")
-      sois <- qHermes:::soi_from_eic(eic$intensity)
+      sois <- XCHermes:::soi_from_eic(eic=eic$intensity,tol=tol)
       sl <- apply(sois, 1, function(x) x[2] - x[1])
-      sois <- sois[which(sl > (x$nscans * 0.5)),,drop=F]
+      sois <- sois[which(sl > 0),,drop=F]
+      sl <- sl[which(sl > 0)]
+      # sois <- sois[which(sl > (tgt$nscans * 0.5)),,drop=F]
       if (nrow(sois) == 0) {return()}
-      # Filters that could be possible applied or deleted (Jordi)
       # smaxint <- apply(sois, 1, function(x) max(eic$intensity[x[1]:x[2]]))
       # sois <- sois[which(smaxint > 1e4),,drop=F]
       # if (nrow(sois) == 0) {return()}
       # if (nrow(sois) >1) {
-      #   xpeaks <- x$peaks[[1]]
+      #   xpeaks <- tgt$peaks[[1]]
       #   # xpeaks$rt <- floor(xpeaks$rt-min(xpeaks$rt)+1)
       #   xpeaks$rt <- 1:nrow(xpeaks)
       #   cossim <- apply(sois,1,function(s){
@@ -204,14 +205,16 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10)
       sois$end <- scantime[sr[1]:sr[2]][sois$scend]
       sois$rt <- sapply(seq(nrow(sois)),function(j) median(scantime[sr[1]:sr[2]][sois$scstart[j]:sois$scend[j]]))
       sois$length <- sois$end - sois$start
-      sois$formula <- x$formula
+      sois$formula <- tgt$formula
       sois$peaks <- apply(sois, 1, function(row) {
         data.frame(rt = scantime[row[1]:row[2]],
                    rtiv = eic$intensity[row[1]:row[2]])
       })
-      sois$mass <- x$mass
+      sois$mass <- tgt$mass
       sois <- dplyr::select(sois, start, rt, end, length, formula, 
                             peaks, mass)
+      sois$SOIidx <- rep(x,times=nrow(sois))
+      sois$nscans <- sl
       return(sois)
     })
     if (is.null(SL)) {
@@ -231,11 +234,11 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10)
     SL$maxo <- sapply(SL$peaks, function(x) {
       max(x[, 2])
     })
-    SL <- SL[SL$length > 5, ,drop=F]
     SL$sample <- i
     return(SL)
   },
   MSnExp = MSnExp, target_list = target_list, ppm = ppm,
+  rtwin=rtwin,tol=tol,thr=thr,
   BPPARAM = bpparam()
   )
   SOIs <- do.call("rbind", SOIs)
@@ -243,18 +246,37 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10)
   MSnExp <- as(MSnExp, "XCMSnExp")
   if (nrow(SOIs) > 0) {
     names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", 
-               "into", "intb", "maxo", "sn", "sample")
+               "into", "intb", "maxo", "sn", "sample",
+               "SOIidx", "nscans")
     SOIs$sn <- 1000
     cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
     row.names(cp_mat) <- seq(nrow(SOIs))
     chromPeaks(MSnExp) <- cp_mat
     chromPeakData(MSnExp) <- S4Vectors::DataFrame(
-      SOIs[,3:11],
-      ms_level = as.integer(1),
-      is_filled = FALSE,
+      ms_level = rep(as.integer(1), times=nrow(SOIs)),
+      is_filled = rep(FALSE, times=nrow(SOIs)),
       row.names = seq(nrow(SOIs))
     )
   }
   return(MSnExp)
 }
 
+SOIfiltbyIL <- function(IL,SOIList,par){
+  filt <- unlist(sapply(seq(nrow(IL)),function(i){
+    x <- IL[i,]
+    r <- which(abs(SOIList$start-x$start)< (SOIList$length) & 
+                 abs(SOIList$end-x$end)< (SOIList$length) &
+                 abs(SOIList$mass-x$mass)<par@filtermz )
+    # SOIList[r,]
+    if(length(r)>0){ 
+      ri <- which(sapply(r,function(s) any(sapply(SOIList$f[[s]],
+                                                  function(y) grepl(y,x$entrynames)))))
+      r <- r[ri]
+    }
+    if(length(r)>0){ 
+      return(r)  
+    }else{return()}
+  }))
+  soifilt <- SOIList[unique(filt),]
+  return(soifilt)
+}
