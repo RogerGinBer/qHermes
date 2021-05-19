@@ -130,13 +130,23 @@ filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
 }
 
 #'@export
-plotFeature <- function(XCMSnExp, feature){
+plotFeature <- function(XCMSnExp, feature, soi = NULL){
     cp <- chromPeaks(XCMSnExp)
     cpdata <- chromPeakData(XCMSnExp)%>% as.data.frame
-    ft <- featureDefinitions(XCMSnExp)[feature,] %>% as.data.frame
-    pks <- cpdata[ft$peakidx[[1]], ] 
-    pknames <- fileNames(XCMSnExp)[cp[ft$peakidx[[1]], "sample"]] %>%
+    if(is.null(soi)){
+      ft <- featureDefinitions(XCMSnExp)[feature,] %>% as.data.frame
+      pks <- cpdata[ft$peakidx[[1]], ] 
+      pknames <- fileNames(XCMSnExp)[cp[ft$peakidx[[1]], "sample"]] %>%
         basename
+      mint <- ft$minrt[1]
+    } else {
+      pks <- dplyr::filter(cpdata, SOIidx == soi)
+      if(nrow(pks) == 0){return()}
+      pknames <- fileNames(XCMSnExp)[pks$sample] %>%
+        basename
+      mint <- min(pks$rtmin)
+    }
+
     plot_data <- lapply(1:nrow(pks), function(x){
         pk <- pks$peaks[[x]]
         pk <- pk[pk$rtiv != 0,]
@@ -146,8 +156,12 @@ plotFeature <- function(XCMSnExp, feature){
                     data.frame(rt = max(pk$rt), rtiv = 0, samp = pknames[x]))
     })
     plot_data <- do.call(rbind, plot_data)
-    ggplot(plot_data) + geom_polygon(aes(x=rt, y=rtiv, fill = samp),
-                                     alpha = 0.5)
+    ggplotly(ggplot(plot_data) +
+               geom_polygon(aes(x=rt+mint, y=rtiv, fill = samp),
+                                     alpha = 0.5) +
+               xlab("Retention time (s)") + ylab("Intensity") +
+               ggtitle(pks$formula[1])
+               )
 } 
 
 #'@export
@@ -181,25 +195,6 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
       sl <- sl[which(sl > 0)]
       # sois <- sois[which(sl > (tgt$nscans * 0.5)),,drop=F]
       if (nrow(sois) == 0) {return()}
-      # smaxint <- apply(sois, 1, function(x) max(eic$intensity[x[1]:x[2]]))
-      # sois <- sois[which(smaxint > 1e4),,drop=F]
-      # if (nrow(sois) == 0) {return()}
-      # if (nrow(sois) >1) {
-      #   xpeaks <- tgt$peaks[[1]]
-      #   # xpeaks$rt <- floor(xpeaks$rt-min(xpeaks$rt)+1)
-      #   xpeaks$rt <- 1:nrow(xpeaks)
-      #   cossim <- apply(sois,1,function(s){
-      #     eicpeaks <- data.table::data.table("rt"=1:(s[2]-s[1]+1),
-      #                                        "rtiv"=eic$intensity[s[1]:s[2]])
-      #     # eicpeaks$rt <- floor(eicpeaks$rt-min(eicpeaks$rt)+1)
-      #     # plot(eicpeaks,type="l", main="EIC")
-      #     # plot(xpeaks,type="l", main="SOIpeaks")
-      #     RHermes:::cosineSim(xpeaks,eicpeaks)
-      #   })
-      #   # soiSIM per quedarme la soi_eic més semblant?
-      #   sois <- sois[which(cossim > 0.5),, drop = FALSE]
-      #   if (nrow(sois) == 0) {return()}
-      # }
       sois <- as.data.frame(sois)
       sois$start <- scantime[sr[1]:sr[2]][sois$scstart]
       sois$end <- scantime[sr[1]:sr[2]][sois$scend]
@@ -253,6 +248,7 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
     row.names(cp_mat) <- seq(nrow(SOIs))
     chromPeaks(MSnExp) <- cp_mat
     chromPeakData(MSnExp) <- S4Vectors::DataFrame(
+      SOIs[, c("rtmin", "peaks", "sample", "SOIidx", "formula")],
       ms_level = rep(as.integer(1), times=nrow(SOIs)),
       is_filled = rep(FALSE, times=nrow(SOIs)),
       row.names = seq(nrow(SOIs))
