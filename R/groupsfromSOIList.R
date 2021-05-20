@@ -6,16 +6,20 @@ findgroupsfromSOI <- function(MSnExp, SOIList, sampleGroups=NULL, rtwin=10){
     # maybe we will need to add sampleclass info as in standardxcms for MsnExp
     pks <- data.table(xcms::chromPeaks(MSnExp))
     # target_list <- RHermes::SOI(struct,1)@SOIList
-    target_list <- SOIList
+    # can add the SOIList from a RHermesExp or not ? 
+    target_list <- SOIList 
     sampleGroups <- as.character(sampleGroups)
     sampleGroupNames <- unique(sampleGroups)
     sampleGroupTable <- table(sampleGroups)
     nSampleGroups <- length(sampleGroupTable)
     filenames <- tools::file_path_sans_ext(MSnbase::sampleNames(MSnExp))
     # consider parallelize this
-    x <- bplapply(seq(length(unique(pks$SOIidx))), function(n){
-        n <- unique(pks$SOIidx)[n]
-        peakidx <- which(pks$SOIidx==n)
+    df <- bplapply(seq(nrow(target_list)), function(n){
+        # n <- unique(pks$SOIidx)[n]
+        # length(which(pks$SOIidx==n))
+        #better this than using unique
+        peakidx <- which(pks$SOIidx==n) 
+        if(length(peakidx)==0){return()}
         npeaks <- pks[peakidx,]
         npeaks$peakidx <- peakidx
         nsoi <- target_list[n,]
@@ -74,10 +78,10 @@ findgroupsfromSOI <- function(MSnExp, SOIList, sampleGroups=NULL, rtwin=10){
         res$peakidx <- list(sort(unlist(grped$peakidx)))
         return(res)
     }, BPPARAM = bpparam())
-    df <- do.call("rbind",x)
+    df <- do.call("rbind",df)
     featureDefinitions(MSnExp) <- S4Vectors::DataFrame(
         df,
-        row.names = seq(nrow(df)) # rename this as SOIxx
+        row.names = seq(nrow(df)) # rename this as SOIxx?
     )
     return(MSnExp)
 }
