@@ -273,21 +273,25 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
 }
 
 SOIfiltbyIL <- function(IL,SOIList,par){
-  filt <- unlist(sapply(seq(nrow(IL)),function(i){
-    x <- IL[i,]
-    r <- which(abs(SOIList$start-x$start)< (SOIList$length) & 
-                 abs(SOIList$end-x$end)< (SOIList$length) &
-                 abs(SOIList$mass-x$mass)<par@filtermz )
-    # SOIList[r,]
-    if(length(r)>0){ 
-      ri <- which(sapply(r,function(s) any(sapply(SOIList$f[[s]],
-                                                  function(y) grepl(y,x$entrynames)))))
-      r <- r[ri]
-    }
-    if(length(r)>0){ 
-      return(r)  
-    }else{return()}
-  }))
-  soifilt <- SOIList[unique(filt),]
-  return(soifilt)
+    # SOIList as SOI@SOIList
+    # IL as full IL() object
+    ILList <- IL@IL
+    ILanot <- IL@annotation
+    # could this be simplified by do.call(rbind,Ilanot)?
+    filt <- unlist(sapply(seq(nrow(ILList)),function(i){
+        x <- ILList[i,]
+        a <- ILanot[[i]]
+        r <- unlist(sapply(seq(nrow(a)),function(j){
+            y <- a[j,]
+            which(SOIList$start==y$start &
+                      SOIList$end==y$end &
+                      SOIList$mass==y$mass )
+        }))
+        # This can be avoided once OriginalSOI index is corrected
+        if(length(r)>0){ 
+            return(r)  
+        }else{return()}
+    }))
+    soifilt <- SOIList[unique(filt),]
+    return(soifilt)
 }
