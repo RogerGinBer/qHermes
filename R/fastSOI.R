@@ -189,7 +189,7 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
   files <- fileNames(MSnExp)
   SOIs <- bplapply(seq_along(files), function(i,MSnExp,target_list,ppm,rtwin,tol,thr) {
     cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-    pks <- XCHermes:::extractToHermes(cur_MSnExp)
+    pks <- extractToHermes(cur_MSnExp)
     mzs <- unlist(pks[[3]][, 1])
     ints <- unlist(pks[[3]][, 2])
     h <- pks[[2]]
@@ -204,7 +204,7 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
                    as.double(as.numeric(c(tgt$mmin, tgt$mmax))), 
                    as.integer(sr),
                    as.integer(length(scanindex)), PACKAGE = "xcms")
-      sois <- XCHermes:::soi_from_eic(eic=eic$intensity,tol=tol)
+      sois <- soi_from_eic(eic=eic$intensity,tol=tol)
       sl <- apply(sois, 1, function(x) x[2] - x[1])
       sois <- sois[which(sl > 0),,drop=F]
       sl <- sl[which(sl > 0)]
