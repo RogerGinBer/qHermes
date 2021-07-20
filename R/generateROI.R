@@ -1,10 +1,68 @@
 
+findROIpeaks <- function(MSnExp, ppm = 3){
+    files <- fileNames(MSnExp)
+    ROIs <- lapply(seq_along(files), function(i){
+        cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
+        data <- qHermes:::extractToHermes(cur_MSnExp)
+        pks <- data[[1]]
+        h <- data[[2]]
+        
+        ## Get m/z and intensity values
+        mzs <- pks[[1]]
+        ints <- pks[[2]]
+        
+        ## Define the values per spectrum:
+        valsPerSpect <- h$originalPeaksCount
+        scant <- h$retentionTime
+        
+        roi <- centWave_orig(mzs, ints, scant, valsPerSpect, ppm = ppm, 
+                                prefilter = c(3, 100),
+                                peakwidth = c(10, 60),
+                                snthresh = 6,
+                                noise = 0)
+        roi <- do.call(rbind, roi)
+
+        roi <- apply(roi, 2, as.numeric)
+        roi <- as.data.frame(roi)
+        
+        #Johannes, is this the correct way to recover the RT values from scmin and scmax?
+        roi <-  mutate(roi, rtmin = scant[scmin]) %>%
+                mutate(., rtmax = scant[scmax]) %>%
+                mutate(., rt = (rtmax + rtmin)/2) %>% 
+                rename(maxo = intensity) %>% mutate(into = maxo, intb = maxo)
+        roi$sample <- i
+        roi$sn <- 1e3
+        return(roi)
+    })
+    ROIs <- do.call("rbind", ROIs)
+    row.names(ROIs) <- NULL
+    
+    MSnExp <- as(MSnExp, "XCMSnExp")
+    if (nrow(ROIs) > 0) {
+        names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", "into",
+                   "intb", "maxo", "sn", "sample")
+        ROIs$sn <- 1e3
+        cp_mat <- ROIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
+        row.names(cp_mat) <- seq(nrow(ROIs))
+        chromPeaks(MSnExp) <- cp_mat
+        chromPeakData(MSnExp) <- S4Vectors::DataFrame(
+            ms_level = rep(as.integer(1), nrow(ROIs)),
+            is_filled = rep(FALSE, nrow(ROIs)),
+            row.names = seq(nrow(ROIs))
+        )
+    }
+    return(MSnExp)
+}
+
+
+
+
 #Modified version of the internal Centwave detection that only generates ROIs
 #' @export
 centWave_orig <- function(mz, int, scantime, valsPerSpect,
                            ppm = 25, peakwidth = c(20,50), snthresh = 10,
-                           prefilter = c(3,100), mzCenterFun = "wMean",
-                           integrate = 1, mzdiff = -0.001, fitgauss = FALSE,
+                           prefilter = c(3,100),
+                           integrate = 1, fitgauss = FALSE,
                            noise = 0, ## noise.local=TRUE,
                            sleep = 0, verboseColumns = FALSE, roiList = list(),
                            firstBaselineCheck = TRUE, roiScales = NULL,
@@ -23,13 +81,6 @@ centWave_orig <- function(mz, int, scantime, valsPerSpect,
         mz <- as.double(mz)
     if (!is.double(int))
         int <- as.double(int)
-    ## Fix the mzCenterFun
-    # mzCenterFun <- paste("mzCenter",
-    #                      gsub(mzCenterFun, pattern = "mzCenter.",
-    #                           replacement = "", fixed = TRUE), sep=".")
-    # if (!exists(mzCenterFun, mode="function"))
-    #     stop("Function '", mzCenterFun, "' not defined !")
-
     if (!is.logical(firstBaselineCheck))
         stop("Parameter 'firstBaselineCheck' should be logical!")
     if (length(firstBaselineCheck) != 1)
@@ -38,11 +89,6 @@ centWave_orig <- function(mz, int, scantime, valsPerSpect,
         if (length(roiScales) != length(roiList) | !is.numeric(roiScales))
             stop("If provided, parameter 'roiScales' has to be a numeric with",
                  " length equal to the length of 'roiList'!")
-    ## if (!is.null(roiScales)) {
-    ##     if (!is.numeric(roiScales) | length(roiScales) != length(roiList))
-    ##         stop("Parameter 'roiScales' has to be a numeric of length equal to",
-    ##              " parameter 'roiList'!")
-    ##}
 
     basenames <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax",
                    "into", "intb", "maxo", "sn")

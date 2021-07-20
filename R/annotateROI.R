@@ -10,7 +10,7 @@ setMethod("annotateChromPeaks",
     ionF <- param@ionFormulas
     ppm <- param@ppm
     anot <- lapply(pks$mz, function(mz){
-        match <- RHermes:::binarySearch(matrix(ncol=1, ionF$m), mz, ppm)
+        match <- RHermes:::binarySearch(matrix(ncol = 1, ionF$m), mz, ppm)
         paste(ionF$f[match], collapse = "_")
     })
     cpdata <- chromPeakData(object)
