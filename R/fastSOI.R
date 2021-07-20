@@ -1,34 +1,24 @@
-soi_from_eic <- function(eic, thr = 1000, tol = 5){
-    above <- which(eic > thr)
-    if(length(above) == 0){return(matrix(nrow=0,ncol=2))}
-    m <- diff(above) < tol
-    in_soi <- F
-    st <- c()
-    end <- c()
-    for(i in seq_along(m)){
-        if(m[i] & !in_soi){
-            st <- c(st, above[i])
-            in_soi <- T
-        } else if(!m[i] & in_soi){
-            end <- c(end, above[i])
-            in_soi <- F
-        }
-    }
-    if(in_soi){end <- c(end, above[i])}
-    if(length(st) == 0 | length(end) == 0){return(matrix(nrow=0,ncol=2))}
-    return(cbind(scstart = st, scend = end))
-}
-
-#'@importFrom xcms chromPeaks chromPeakData
-#'@importFrom dplyr select rename
-#'@importFrom BiocParallel SerialParam
-#'@export
-fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
+#' @title fastSOI
+#' @description A new implementation of SOI detection algorithm that avoids the
+#'   datapoint abstraction.
+#' @details The algorithm is faster than the regular SOI detection used in
+#'   RHermes, but on the other hand loses the computational commodity of having
+#'   all experimental datapoints annotated.
+#' @param MSnExp An MSnExp object containing one or multiple MS1 files
+#' @param ChemFormulaParam A ChemFormulaParam object, containing all ionic
+#'   formulas to be annotated in the data.
+#' @param minint Minimum intensity of the scans used in the calculated XICs.
+#'   Defaults to 1000.
+#' @importFrom xcms chromPeaks chromPeakData
+#' @importFrom dplyr select rename
+#' @importFrom BiocParallel SerialParam
+#' @export
+fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000){
     ppm <- ChemFormulaParam@ppm
     ionf <- ChemFormulaParam@ionFormulas
     message("Calculating fast SOIs")
-    ionf$s <- ionf$m*(1-ppm*1e-6)
-    ionf$e <- ionf$m*(1+ppm*1e-6)
+    ionf$s <- ionf$m * (1 - ppm * 1e-6)
+    ionf$e <- ionf$m * (1 + ppm * 1e-6)
     
     ##Processing each file
     files <- fileNames(MSnExp)
@@ -110,6 +100,31 @@ fastSOI <- function(MSnExp, minint = 1000, ChemFormulaParam){
     return(MSnExp)
 }
 
+## Internal function, similar to ROI detection in XCMS, but with a scan gap
+## tolerance implemented.
+
+soi_from_eic <- function(eic, thr = 1000, tol = 5){
+  above <- which(eic > thr)
+  if(length(above) == 0){return(matrix(nrow=0,ncol=2))}
+  m <- diff(above) < tol
+  in_soi <- F
+  st <- c()
+  end <- c()
+  for(i in seq_along(m)){
+    if(m[i] & !in_soi){
+      st <- c(st, above[i])
+      in_soi <- T
+    } else if(!m[i] & in_soi){
+      end <- c(end, above[i])
+      in_soi <- F
+    }
+  }
+  if(in_soi){end <- c(end, above[i])}
+  if(length(st) == 0 | length(end) == 0){return(matrix(nrow=0,ncol=2))}
+  return(cbind(scstart = st, scend = end))
+}
+
+
 #'@export
 filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
     cp <- chromPeaks(XCMSnExp)
@@ -129,74 +144,72 @@ filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
     return(XCMSnExp)
 }
 
-#'@export
-plotFeature <- function(XCMSnExp, feature, soi = NULL){
-    cp <- chromPeaks(XCMSnExp)
-    cpdata <- chromPeakData(XCMSnExp)%>% as.data.frame
-    if(is.null(soi)){
-      ft <- featureDefinitions(XCMSnExp)[feature,] %>% as.data.frame
-      pks <- cpdata[ft$peakidx[[1]], ] 
-      pknames <- fileNames(XCMSnExp)[cp[ft$peakidx[[1]], "sample"]] %>%
-        basename
-      mint <- ft$minrt[1]
-    } else {
-      pks <- dplyr::filter(cpdata, SOIidx == soi)
-      if(nrow(pks) == 0){return()}
-      pknames <- fileNames(XCMSnExp)[pks$sample] %>%
-        basename
-      mint <- min(pks$rtmin)
-    }
 
-    plot_data <- lapply(1:nrow(pks), function(x){
-        pk <- pks$peaks[[x]]
-        pk <- pk[pk$rtiv != 0,]
-        pk$samp <- pknames[x]
-        pk <- rbind(data.frame(rt = min(pk$rt), rtiv = 0, samp = pknames[x]),
-                    pk,
-                    data.frame(rt = max(pk$rt), rtiv = 0, samp = pknames[x]))
-    })
-    plot_data <- do.call(rbind, plot_data)
-    
-    p1 <- ggplotly(ggplot(plot_data) +
-      geom_polygon(aes(x=rt+mint, y=rtiv, fill = samp),
-                   alpha = 0.5) +
-      xlab("Retention time (s)") + ylab("Intensity") +
-      ggtitle(pks$formula[1]))
-    
-    integral <- plot_data %>% group_by(samp) %>%
-      summarise(intensity = sum(rtiv))
-    
-    p2 <- ggplotly(ggplot(integral) +
-                     geom_point(aes(x=intensity, y=0, color = samp),
-                                show.legend = FALSE)+
-                     scale_x_log10() +
-                     theme(axis.text.y = element_blank(),
-                           axis.ticks.y = element_blank())) %>% hide_legend()
-    for (i in seq_len(nrow(integral))){
-      p2$x$data[[i]]$text <- c(p2$x$data[[i]]$text, "") 
-      p2$x$data[[i]]$showlegend <- FALSE
-    }
-    subplot(p1, p2, nrows = 2, heights = c(0.9, 0.1), which_layout = 1)
-} 
-
+#' @title fastSOIfromList
+#' @description Quantify SOIs in multiple files using an RHermes SOI list as a
+#'   template.
+#' @details The function uses the fastSOI approach to quickly detect SOIs in
+#'   multiple files using a target list of all SOIs in a given RHermesExp
+#'   SOIList.
+#' @param MSnExp
+#' @param struct
+#' @param SOI_id
+#' @param rtwin
+#' @param tol
+#' @param thr
 #'@export
-fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1000) 
-{
-  ppm <- struct@metadata@ExpParam@ppm
-  target_list <- RHermes::SOI(struct,SOI_id)@SOIList
-  target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
-  target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
-  files <- fileNames(MSnExp)
-  SOIs <- bplapply(seq_along(files), function(i,MSnExp,target_list,ppm,rtwin,tol,thr) {
+fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3, 
+                                thr = 1000) {
+    ppm <- struct@metadata@ExpParam@ppm
+    target_list <- RHermes::SOI(struct,SOI_id)@SOIList
+    target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
+    target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
+    files <- fileNames(MSnExp)
+    SOIs <- bplapply(seq_along(files), single_fastSOI_from_list,
+                     MSnExp = MSnExp, target_list = target_list, ppm = ppm,
+                     rtwin = rtwin, tol = tol, thr = thr,
+                     BPPARAM = bpparam()
+    )
+    SOIs <- do.call("rbind", SOIs)
+    row.names(SOIs) <- NULL
+    MSnExp <- as(MSnExp, "XCMSnExp")
+    if (nrow(SOIs) > 0) {
+        names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", 
+                   "into", "intb", "maxo", "sn", "sample",
+                   "SOIidx", "nscans")
+        SOIs$sn <- 1000
+        cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
+        row.names(cp_mat) <- seq(nrow(SOIs))
+        chromPeaks(MSnExp) <- cp_mat
+        chromPeakData(MSnExp) <- S4Vectors::DataFrame(
+            SOIs[, c("rtmin", "peaks", "sample", "SOIidx", "formula")],
+            ms_level = rep(as.integer(1), times=nrow(SOIs)),
+            is_filled = rep(FALSE, times=nrow(SOIs)),
+            row.names = seq(nrow(SOIs))
+        )
+    }
+    return(MSnExp)
+}
+
+single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol,
+                                      thr){
     cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
+<<<<<<< Updated upstream
     pks <- extractToHermes(cur_MSnExp)
     mzs <- unlist(pks[[3]][, 1])
     ints <- unlist(pks[[3]][, 2])
     h <- pks[[2]]
+=======
+    raw_data <- qHermes:::extractToHermes(cur_MSnExp)
+    mzs <- unlist(raw_data[[3]][, 1])
+    ints <- unlist(raw_data[[3]][, 2])
+    h <- raw_data[[2]]
+>>>>>>> Stashed changes
     scantime <- h$retentionTime
     valsPerSpect <- h$originalPeaksCount
     scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect)
     SL <- lapply(seq(nrow(target_list)), function(x) {
+<<<<<<< Updated upstream
       tgt <- target_list[x, ]
       sr <- which(scantime >= (tgt$start - rtwin) & scantime <= (tgt$end + rtwin))
       sr <- c(min(sr),max(sr))
@@ -226,53 +239,53 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id =1, rtwin=10, tol = 10,thr=1
       sois$SOIidx <- rep(x,times=nrow(sois))
       sois$nscans <- sl
       return(sois)
+=======
+        tgt <- target_list[x, ]
+        sr <- which(scantime >= (tgt$start - rtwin) &
+                      scantime <= (tgt$end + rtwin))
+        sr <- c(min(sr), max(sr))
+        eic <- .Call("getEIC", mzs, ints, scanindex, 
+                     as.double(as.numeric(c(tgt$mmin, tgt$mmax))), 
+                     as.integer(sr),
+                     as.integer(length(scanindex)), PACKAGE = "xcms")
+        sois <- soi_from_eic(eic = eic$intensity, tol = tol)
+        sl <- apply(sois, 1, function(x) x[2] - x[1])
+        sois <- sois[which(sl > 0), , drop = FALSE]
+        sl <- sl[which(sl > 0)]
+        if (nrow(sois) == 0) {return()}
+        sois <- as.data.frame(sois)
+        sois$start <- scantime[sr[1]:sr[2]][sois$scstart]
+        sois$end <- scantime[sr[1]:sr[2]][sois$scend]
+        sois$rt <- sapply(seq(nrow(sois)),
+                          function(j) median(scantime[sr[1]:sr[2]][sois$scstart[j]:sois$scend[j]]))
+        sois$length <- sois$end - sois$start
+        sois$formula <- tgt$formula
+        sois$peaks <- apply(sois, 1, function(row) {
+          data.frame(rt = scantime[row[1]:row[2]],
+                        rtiv = eic$intensity[row[1]:row[2]])
+        })
+        sois$mass <- tgt$mass
+        sois <- dplyr::select(sois, start, rt, end, length, formula, 
+                              peaks, mass)
+        sois$SOIidx <- rep(x, times = nrow(sois))
+        sois$nscans <- sl
+        return(sois)
+>>>>>>> Stashed changes
     })
-    if (is.null(SL)) {
-      return()
-    }
+    if (is.null(SL)) {return()}
     SL <- do.call("rbind", SL)
-    # suppressMessages({
-    #   SL <- RHermes:::groupShort(SL, maxlen = 30, BPPARAM = BiocParallel::SerialParam())
-    # })
     SL <- dplyr::rename(SL, rtmin = start, rtmax = end, mz = mass)
     SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-06)
     SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-06)
-    SL$into <- sapply(SL$peaks, function(x) {
-      sum(x[, 2])
-    })
+    SL$into <- sapply(SL$peaks, function(x) {sum(x[, 2])})
     SL$intb <- SL$into
-    SL$maxo <- sapply(SL$peaks, function(x) {
-      max(x[, 2])
-    })
+    SL$maxo <- sapply(SL$peaks, function(x) {max(x[, 2])})
     SL$sample <- i
     return(SL)
-  },
-  MSnExp = MSnExp, target_list = target_list, ppm = ppm,
-  rtwin=rtwin,tol=tol,thr=thr,
-  BPPARAM = bpparam()
-  )
-  SOIs <- do.call("rbind", SOIs)
-  row.names(SOIs) <- NULL
-  MSnExp <- as(MSnExp, "XCMSnExp")
-  if (nrow(SOIs) > 0) {
-    names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", 
-               "into", "intb", "maxo", "sn", "sample",
-               "SOIidx", "nscans")
-    SOIs$sn <- 1000
-    cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
-    row.names(cp_mat) <- seq(nrow(SOIs))
-    chromPeaks(MSnExp) <- cp_mat
-    chromPeakData(MSnExp) <- S4Vectors::DataFrame(
-      SOIs[, c("rtmin", "peaks", "sample", "SOIidx", "formula")],
-      ms_level = rep(as.integer(1), times=nrow(SOIs)),
-      is_filled = rep(FALSE, times=nrow(SOIs)),
-      row.names = seq(nrow(SOIs))
-    )
-  }
-  return(MSnExp)
 }
 
-SOIfiltbyIL <- function(IL,SOIList,par){
+
+SOIfiltbyIL <- function(IL, SOIList, par){
     # SOIList as SOI@SOIList
     # IL as full IL() object
     ILList <- IL@IL

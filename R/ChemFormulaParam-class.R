@@ -1,3 +1,12 @@
+#' @title ChemFormulaParam
+#' @description Main ionic formula structure
+#' @slot DB Character, path to the molecular formula database
+#' @slot adlist Character, list of adducts that will be used to generate ionic
+#'   formulas
+#' @slot ppm Numeric, instrumental mass error (in parts per million, ppm).
+#' @slot ionFormulas Dataframe. NOT to be manually provided by the user. It is
+#'   automatically filled when the object is created, using the provided DB and
+#'   adlist.
 #' @export ChemFormulaParam
 ChemFormulaParam <- setClass("ChemFormulaParam",
         slots = list(DB = "character",

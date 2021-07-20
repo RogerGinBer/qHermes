@@ -1,36 +1,26 @@
 #'@export
-findgroupsfromSOI <- function(MSnExp, SOIList, sampleGroups=NULL, rtwin=10){
+findSOIGroups <- function(MSnExp, sampleGroups = NULL, minfrac = 0.8){
     if(is.null(sampleGroups)){
         stop("Please introduce your sample class as a vector in sampleGroups")
     }
+    if(!between(minfrac, 0, 1)) stop("minfrac should be between 0 and 1")
+    
     # maybe we will need to add sampleclass info as in standardxcms for MsnExp
     pks <- data.table(xcms::chromPeaks(MSnExp))
     # target_list <- RHermes::SOI(struct,1)@SOIList
     # can add the SOIList from a RHermesExp or not ? 
-    target_list <- SOIList 
-    sampleGroups <- as.character(sampleGroups)
-    sampleGroupNames <- unique(sampleGroups)
-    sampleGroupTable <- table(sampleGroups)
-    nSampleGroups <- length(sampleGroupTable)
+
     filenames <- tools::file_path_sans_ext(MSnbase::sampleNames(MSnExp))
     # consider parallelize this
-    df <- bplapply(seq(nrow(target_list)), function(n){
-        # n <- unique(pks$SOIidx)[n]
-        # length(which(pks$SOIidx==n))
-        #better this than using unique
+    df <- bplapply(unique(pks$SOIidx),
+                   function(n, pks, filenames, sampleGroups){
         peakidx <- which(pks$SOIidx==n) 
         if(length(peakidx)==0){return()}
         npeaks <- pks[peakidx,]
         npeaks$peakidx <- peakidx
-        nsoi <- target_list[n,]
-      
+
         grped <- lapply(seq(length(filenames)), function(i){
             nipks <- npeaks[which(npeaks$sample==i), ]
-            # if(nrow(nipks)>1){ 
-            #   nipks <- nipks[which(nipks$rtmin>=(nsoi$start-rtwin) &
-            #                          nipks$rtmax<=(nsoi$end+rtwin)),]
-            #   
-            # }
             if(nrow(nipks) > 1){
                 nres <- nipks[1,]
                 nres$mz <- mean(nipks$mz)
@@ -77,8 +67,20 @@ findgroupsfromSOI <- function(MSnExp, SOIList, sampleGroups=NULL, rtwin=10){
         res <- as.data.frame(res_mat)
         res$peakidx <- list(sort(unlist(grped$peakidx)))
         return(res)
-    }, BPPARAM = bpparam())
-    df <- do.call("rbind",df)
+    }, BPPARAM = bpparam(),
+    pks = pks, filenames = filenames, sampleGroups = sampleGroups)
+    df <- do.call("rbind", df)
+    
+    #Minimal fraction filtering
+    filtgroup <- "Sample"
+    sg <- t(as.matrix(table(sampleGroups)))
+    uniqueClass <- colnames(sg)
+    minfrac <- apply(df[, uniqueClass, drop = FALSE], 1, function(x)
+        any(sapply(uniqueClass,
+                   function(y) as.numeric(x[y])/sg[,y]) >= minfrac)
+    )
+    df <- df[minfrac,]
+
     featureDefinitions(MSnExp) <- S4Vectors::DataFrame(
         df,
         row.names = seq(nrow(df)) # rename this as SOIxx?
