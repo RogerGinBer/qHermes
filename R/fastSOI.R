@@ -194,52 +194,14 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3,
 single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol,
                                       thr){
     cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-<<<<<<< Updated upstream
-    pks <- extractToHermes(cur_MSnExp)
-    mzs <- unlist(pks[[3]][, 1])
-    ints <- unlist(pks[[3]][, 2])
-    h <- pks[[2]]
-=======
-    raw_data <- qHermes:::extractToHermes(cur_MSnExp)
+    raw_data <- extractToHermes(cur_MSnExp)
     mzs <- unlist(raw_data[[3]][, 1])
     ints <- unlist(raw_data[[3]][, 2])
     h <- raw_data[[2]]
->>>>>>> Stashed changes
     scantime <- h$retentionTime
     valsPerSpect <- h$originalPeaksCount
     scanindex <- xcms:::valueCount2ScanIndex(valsPerSpect)
     SL <- lapply(seq(nrow(target_list)), function(x) {
-<<<<<<< Updated upstream
-      tgt <- target_list[x, ]
-      sr <- which(scantime >= (tgt$start - rtwin) & scantime <= (tgt$end + rtwin))
-      sr <- c(min(sr),max(sr))
-      eic <- .Call("getEIC", mzs, ints, scanindex, 
-                   as.double(as.numeric(c(tgt$mmin, tgt$mmax))), 
-                   as.integer(sr),
-                   as.integer(length(scanindex)), PACKAGE = "xcms")
-      sois <- soi_from_eic(eic=eic$intensity,tol=tol)
-      sl <- apply(sois, 1, function(x) x[2] - x[1])
-      sois <- sois[which(sl > 0),,drop=F]
-      sl <- sl[which(sl > 0)]
-      # sois <- sois[which(sl > (tgt$nscans * 0.5)),,drop=F]
-      if (nrow(sois) == 0) {return()}
-      sois <- as.data.frame(sois)
-      sois$start <- scantime[sr[1]:sr[2]][sois$scstart]
-      sois$end <- scantime[sr[1]:sr[2]][sois$scend]
-      sois$rt <- sapply(seq(nrow(sois)),function(j) median(scantime[sr[1]:sr[2]][sois$scstart[j]:sois$scend[j]]))
-      sois$length <- sois$end - sois$start
-      sois$formula <- tgt$formula
-      sois$peaks <- apply(sois, 1, function(row) {
-        data.frame(rt = scantime[row[1]:row[2]],
-                   rtiv = eic$intensity[row[1]:row[2]])
-      })
-      sois$mass <- tgt$mass
-      sois <- dplyr::select(sois, start, rt, end, length, formula, 
-                            peaks, mass)
-      sois$SOIidx <- rep(x,times=nrow(sois))
-      sois$nscans <- sl
-      return(sois)
-=======
         tgt <- target_list[x, ]
         sr <- which(scantime >= (tgt$start - rtwin) &
                       scantime <= (tgt$end + rtwin))
@@ -270,7 +232,6 @@ single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol,
         sois$SOIidx <- rep(x, times = nrow(sois))
         sois$nscans <- sl
         return(sois)
->>>>>>> Stashed changes
     })
     if (is.null(SL)) {return()}
     SL <- do.call("rbind", SL)
