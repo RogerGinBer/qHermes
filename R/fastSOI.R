@@ -245,15 +245,12 @@ single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol,
     return(SL)
 }
 
-
-SOIfiltbyIL <- function(IL, SOIList, par){
+#'@export
+SOIfiltbyILv1 <- function(IL, SOIList, par){
     # SOIList as SOI@SOIList
     # IL as full IL() object
-    ILList <- IL@IL
     ILanot <- IL@annotation
-    # could this be simplified by do.call(rbind,Ilanot)?
-    filt <- unlist(sapply(seq(nrow(ILList)),function(i){
-        x <- ILList[i,]
+    filt <- unlist(sapply(seq_along(ILanot)),function(i){
         a <- ILanot[[i]]
         r <- unlist(sapply(seq(nrow(a)),function(j){
             y <- a[j,]
@@ -268,4 +265,66 @@ SOIfiltbyIL <- function(IL, SOIList, par){
     }))
     soifilt <- SOIList[unique(filt),]
     return(soifilt)
+}
+
+SOIfiltbyILv2 <- function(IL,SOIList,par){
+    # This function is for when OriginalSOI index is corrected
+    # should add a flag if IL SOIid does not match 
+    ILanot <- IL@annotation
+    filt <- unlist(sapply(seq(length(ILanot)),function(i){
+        a <- ILanot[[i]]
+        r <- a$metadata[[1]]$originalSOI
+        r <- unique(as.numeric(r))
+            return(r)  
+    }))
+    soifilt <- SOIList[unique(filt),]
+    return(soifilt)
+    # nsoi <- length(RHermesExp@data@SOI)
+    # RHermesExp@data@SOI[[nsoi+1]] <- RHermesExp@data@SOI[[nsoi]]
+    # RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
+    # return(RHermesExp)
+}
+
+#'@export
+consensusSOI <- function(RHermesExp,SOIids,minSOI=NULL,rtwin=5){
+    if(length(SOIids)==1){stop("SOIids value too low")}
+    if(is.null(minSOI)){stop("Please select a value for minSOI")}
+    if(length(SOIids)<minSOI){stop("minSOI value too large, please select a valid value for minSOI")}
+    slist <- lapply(SOIids,SOI,struct=RHermesExp)
+    sdf <- lapply(seq(length(slist)),function(x){
+        r <- slist[[x]]@SOIList
+        r$soiN <- x
+        return(r)
+    })
+    sapply(sdf,nrow)
+    sdf <- do.call("rbind",sdf)
+    RES <- lapply(seq(nrow(sdf)),function(x) return())
+    exlist <- c()
+    for(i in seq(nrow(sdf))){
+        if(i %in% exlist){next}
+        x <- sdf[i,]
+        idx <- which(abs(sdf$start-x$start)<rtwin &
+                         abs(sdf$end-x$end)<rtwin &
+                         sdf$formula==x$formula)
+        if(any(idx%in%exlist)) {idx <- idx[-which(idx%in%exlist)]}
+        usoi <- sdf[idx,]
+        if(length(unique(usoi$soiN))>=minSOI){
+            newsoi <- usoi[which.max(usoi$MaxInt),]
+            newsoi$start <- min(usoi$start) #mean?
+            newsoi$end <- max(usoi$end) #mean?
+            newsoi$length <- newsoi$end-newsoi$start
+            # sum $peaks of all to unify?
+            newsoi <- newsoi[,1:17]
+            exlist <- c(exlist,idx)
+            # too slow? potser eliminar de sdf directament?
+            RES[[i]] <- newsoi
+        }
+        
+    }
+    RES <- do.call("rbind",RES)
+    return(RES)
+    # nsoi <- length(RHermesExp@data@SOI)
+    # RHermesExp@data@SOI[[nsoi+1]] <- RHermesExp@data@SOI[[nsoi]]
+    # RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
+    # return(RHermesExp)
 }
