@@ -250,7 +250,7 @@ SOIfiltbyILv1 <- function(IL, SOIList, par){
     # SOIList as SOI@SOIList
     # IL as full IL() object
     ILanot <- IL@annotation
-    filt <- unlist(sapply(seq_along(ILanot)),function(i){
+    filt <- unlist(sapply(seq_along(ILanot),function(i){
         a <- ILanot[[i]]
         r <- unlist(sapply(seq(nrow(a)),function(j){
             y <- a[j,]
