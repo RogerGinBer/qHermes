@@ -328,3 +328,73 @@ consensusSOI <- function(RHermesExp,SOIids,minSOI=NULL,rtwin=5){
     # RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
     # return(RHermesExp)
 }
+
+# usage
+# MsnExp  <- readMSData (XXXXX) - Raw data onDisk of qHermes files
+# cwp <- CentWaveParam() - peakwidth always c(5,30)?
+# rtp <-  ObiwarpParam() - Indicate centersample?
+#'@export
+getCorrectMatrix <- function(MsnExp, cwp, rtp){
+    MsnExp <- findChromPeaks(MsnExp, param = cwp)
+    MsnExp <- adjustRtime(MsnExp, param = rtp)
+    
+    rtRaw <- rtime(MsnExp, bySample = TRUE,adjusted=F)
+    rtAdj <- rtime(MsnExp, bySample = TRUE,adjusted=T)
+    rtr <- rtRaw[[1]] #raw data instrumeant scan rate
+    stepRt <- round(min(diff(rtr)),1) #+0.1
+    rtmax <- ceiling(max(unlist(rtRaw)))
+    tpoints <- seq(0,rtmax,stepRt)
+    xpfiles <- fileNames(MsnExp)
+    
+    rtCorr <- lapply(seq(xpfiles),function(i){
+        rta <- rtAdj[[i]]
+        rtr <- rtRaw[[i]]
+        r <- sapply(tpoints,function(j){
+            minj <- j-stepRt
+            idx <- which(rtr>=minj & rtr<j)
+            if(length(idx)==0){
+                return(c(j,0))
+            }else{
+                rtdif <- median(rta[idx]-rtr[idx])
+                return(c(j,rtdif))
+                # rtdif is the value to be subtracted 
+                # to raw RT to match corrected RT
+                # rtAdj = rtRaw + rtdif
+            }
+        })
+        r <- t(r)
+        r
+    })
+    ## there is still some gaps
+    ## need to do some imputation before application to qHermes
+    idx <- seq(rtCorr)
+    idx <- idx[-rtp@centerSample]
+    for(i in idx){
+        rtc <- rtCorr[[i]]
+        rt0 <- which(rtc[,2]==0)
+        rt0 <- rt0[which(rt0>1 & rt0<nrow(rtc))]
+        for(j in rt0){
+            a <- j-1
+            if(a %in% rt0){
+                while(a %in% rt0){
+                    a <- a-1
+                    if(a==0){next}
+                }
+            }
+            b <- j+1
+            if(b %in% rt0){
+                while(b %in% rt0){
+                    b <- b+1
+                    if(b==0){next}
+                }
+            }
+            a <- rtc[a,]
+            b <- rtc[b,]
+            #impute
+            D1 <- sqrt(((b[2]-a[2])^2)+((b[1]-a[1])^2))
+            rtc[j,2] <- (a[2]+(((b[1]-a[1])/D1)*(b[2]-a[2])))
+        }
+        rtCorr[[i]] <- rtc
+    }
+    return(rtCorr)
+}
