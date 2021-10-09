@@ -35,7 +35,8 @@ matchSOIToPeaks <- function(XCMSnExp, RHermesExp, SOI_id){
     
     representedSOI <- sois[representedSOI_ID,]
     unrepresentedSOI <- sois[-representedSOI_ID,]
-    return(list(pks = newpks,
+    return(list(pks = pks,
+                newpks = newpks,
                 repSOI = representedSOI,
                 norepSOI = unrepresentedSOI))
 }
@@ -51,4 +52,6 @@ plotpks <- function(peakMat){
 plot_particular_peak <- function(id, XCMSnExp){
     
 }
+
+
 
