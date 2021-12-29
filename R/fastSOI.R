@@ -292,20 +292,19 @@ consensusSOI <- function(RHermesExp,SOIids,minSOI=NULL,rtwin=5){
     if(length(SOIids)<minSOI){stop("minSOI value too large, please select a valid value for minSOI")}
     slist <- lapply(SOIids,SOI,struct=RHermesExp)
     sdf <- lapply(seq(length(slist)),function(x){
-        r <- slist[[x]]@SOIList
-        r$soiN <- x
-        return(r)
+      r <- slist[[x]]@SOIList
+      r$soiN <- x
+      return(r)
     })
-    sapply(sdf,nrow)
     sdf <- do.call("rbind",sdf)
+    sdf %<>% mutate(apex = as.numeric(lapply(peaks, function(x){x$rt[which.max(x$rtiv)]})))
     RES <- lapply(seq(nrow(sdf)),function(x) return())
     exlist <- c()
     for(i in seq(nrow(sdf))){
         if(i %in% exlist){next}
         x <- sdf[i,]
-        idx <- which(abs(sdf$start-x$start)<rtwin &
-                         abs(sdf$end-x$end)<rtwin &
-                         sdf$formula==x$formula)
+        idx <- which(abs(sdf$apex-x$apex) < rtwin &
+                        sdf$formula==x$formula)
         if(any(idx%in%exlist)) {idx <- idx[-which(idx%in%exlist)]}
         usoi <- sdf[idx,]
         if(length(unique(usoi$soiN))>=minSOI){
@@ -314,19 +313,30 @@ consensusSOI <- function(RHermesExp,SOIids,minSOI=NULL,rtwin=5){
             newsoi$end <- max(usoi$end) #mean?
             newsoi$length <- newsoi$end-newsoi$start
             # sum $peaks of all to unify?
-            newsoi <- newsoi[,1:17]
+            newsoi <- newsoi[,1:18]
+            newsoi$soiN <- paste(usoi$soiN, collapse="")
+            newsoi$nsample <- length(unique(usoi$soiN))
             exlist <- c(exlist,idx)
             # too slow? potser eliminar de sdf directament?
             RES[[i]] <- newsoi
         }
-        
+      
     }
     RES <- do.call("rbind",RES)
-    return(RES)
-    # nsoi <- length(RHermesExp@data@SOI)
-    # RHermesExp@data@SOI[[nsoi+1]] <- RHermesExp@data@SOI[[nsoi]]
-    # RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
-    # return(RHermesExp)
+    
+    ## Create a new SOI list object
+    nsoi <- length(RHermesExp@data@SOI)
+    RHermesExp@data@SOI[[nsoi+1]] <- RHermesExp@data@SOI[[nsoi]]
+    RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
+    
+    message("Recalculating SOI plotting dataframe:")
+    plist <- lapply(unique(Groups$formula), preparePlottingDF,
+                    Groups)
+    plist <- do.call(rbind, plist)
+    plist$isov <- rep("M0", nrow(plist))    
+    RHermesExp@data@SOI[[nsoi+1]]@PlotDF <- plist
+    
+    return(RHermesExp)
 }
 
 # usage
