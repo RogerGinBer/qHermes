@@ -330,7 +330,7 @@ consensusSOI <- function(RHermesExp,SOIids,minSOI=NULL,rtwin=5){
     RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
     
     message("Recalculating SOI plotting dataframe:")
-    plist <- lapply(unique(Groups$formula), preparePlottingDF,
+    plist <- lapply(unique(Groups$formula), RHermes:::preparePlottingDF,
                     Groups)
     plist <- do.call(rbind, plist)
     plist$isov <- rep("M0", nrow(plist))    
