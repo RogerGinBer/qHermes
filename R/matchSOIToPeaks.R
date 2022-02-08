@@ -275,3 +275,42 @@ calculate_MS2_correlation_from_feature <- function(feature_df){
 #             subtitle = paste("Putative identification:",
 #                              strsplit(newpks$MS2Data[[i]]$results[[1]]$formula[[1]], "#")[[1]][3]))
 
+
+#' @export
+mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10){
+    pks <- as.data.frame(featureDefinitions(XCMSnExp))
+    
+    pks <- rename(pks, mz = mzmed, rt = rtmed)
+    
+    #Match XCMS peaks with SOIs
+    pks <- matchPeaksToSOI(pks, RHermesExp, SOI, RTtol)
+    message(length(which(!is.na(pks$soi))), " XCMS peaks with SOI")
+    
+    #Extract MS2 information and match with peaks
+    if(!is.na(MS2Exp)){
+        pks <- subset(pks, !is.na(pks$soi))
+        pks <- retrieveMS2Info(pks, RHermesExp, MS2Exp, RTtol)
+        # message(length(which(pks$foundMS2)), " XCMS peaks with MS2")
+        message(length(which(!is.na(pks$soi) & pks$foundMS2)),
+                " XCMS peaks with SOI and MS2")
+        message("   - Of which ",
+                length(which(!pks$putativeID[!is.na(pks$soi) & pks$foundMS2] %in%
+                                 c("No significant hits", "Missing reference spectra"))),
+                " have a putative ID")
+    }
+    
+    #Filter all peaks without matching SOI
+    pks <- subset(pks, !is.na(pks$soi))
+    
+    
+    pks <- rename(pks, mzmed = mz, rtmed = rt)
+    
+    #Update XCMSnExp object
+    browser()
+    class(pks$peakidx) <- "list"
+    # class(pks$soi) <- "numeric"
+    class(pks$putativeID) <- "character"
+    featureDefinitions(XCMSnExp) <- S4Vectors::DataFrame(pks)
+    return(XCMSnExp)
+}
+

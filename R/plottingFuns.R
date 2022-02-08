@@ -46,3 +46,32 @@ plotFeature <- function(XCMSnExp, feature, soi = NULL){
     }
     subplot(p1, p2, nrows = 2, heights = c(0.9, 0.1), which_layout = 1)
 } 
+
+
+#' @export
+plotFeaturesMerged <- function(XCMSnExp, id){
+    ft <- as.data.frame(featureDefinitions(XCMSnExp))
+    pks <- chromPeaks(XCMSnExp)
+    pkid <- ft$peakidx[[id]]
+    cur_pks <- pks[pkid,]
+    chrom <- xcms::chromatogram(xcmsExp,
+                       mz = c(min(cur_pks[,2]), max(cur_pks[,3])),
+                       rt = c(min(cur_pks[,5]), max(cur_pks[,6])))
+    plot(chrom)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
