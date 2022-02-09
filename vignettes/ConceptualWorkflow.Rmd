@@ -1,0 +1,72 @@
+---
+title: "Conceptual Quantification Workflow using qHermes"
+output: html_notebook
+---
+
+```{r}
+library(qHermes)
+library(xcms)
+library(MSnbase)
+library(magrittr)
+library(ggplot2)
+library(dplyr)
+library(BiocParallel)
+register(SerialParam())
+```
+
+
+```{r}
+knitr::opts_chunk$set(root.dir = "/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/")
+```
+
+
+## Perform XCMS peak-picking
+
+```{r cache = TRUE}
+files <- list.files(path = "/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/MS1_positive/",
+                    pattern = "70-1000.*mzML", full.names = TRUE)
+msdata <- readMSData(files, mode = "onDisk")
+
+cwp <- CentWaveParam(ppm = 5, peakwidth = c(10,60), snthresh = 0)
+xcmsExp <- findChromPeaks(msdata, cwp)
+```
+
+
+## Merge RHermes information (peaks)
+
+```{r}
+RHermesExp <- readRDS("/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
+merged_object <- qHermes::mergeRHermesXCMS(xcmsExp, RHermesExp, 4, 1)
+```
+
+### Visualize results
+
+```{r}
+cpdata <- chromPeakData(merged_object) %>% as.data.frame()
+```
+
+## Merge RHermes information (features)
+
+```{r}
+xcmsExp <- groupChromPeaks(xcmsExp, PeakDensityParam(c("13C", "13C", "B", "12C", "12C"),
+                                                     bw = 2,
+                                                     minFraction = 0,
+                                                     binSize = 0.01))
+```
+
+
+```{r}
+merged_object_feat <- mergeRHermesXCMSFeatures(xcmsExp, RHermesExp, 4, 1)
+features <- featureDefinitions(merged_object_feat) %>% as.data.frame()
+```
+
+```{r}
+plotFeaturesMerged(merged_object_feat, 43)
+```
+
+
+
+
+
+
+
