@@ -28,8 +28,9 @@ mergeRHermesXCMS <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10)
     cp_mat <- pks[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
     row.names(cp_mat) <- row.names(pks)
     chromPeaks(XCMSnExp) <- cp_mat
+    otherColumns <- colnames(pks)[!colnames(pks) %in% names]
     chromPeakData(XCMSnExp) <- cbind(chromPeakData(XCMSnExp),
-                                   S4Vectors::DataFrame(pks[, 12:17],
+                                   S4Vectors::DataFrame(pks[, otherColumns],
                                                   row.names = row.names(pks)))
     return(XCMSnExp)
 }
@@ -306,10 +307,9 @@ mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTt
     pks <- rename(pks, mzmed = mz, rtmed = rt)
     
     #Update XCMSnExp object
-    browser()
     class(pks$peakidx) <- "list"
     # class(pks$soi) <- "numeric"
-    class(pks$putativeID) <- "character"
+    if(!is.na(MS2Exp)) class(pks$putativeID) <- "character"
     featureDefinitions(XCMSnExp) <- S4Vectors::DataFrame(pks)
     return(XCMSnExp)
 }
