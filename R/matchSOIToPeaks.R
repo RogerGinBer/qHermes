@@ -283,24 +283,24 @@ mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTt
     
     pks <- rename(pks, mz = mzmed, rt = rtmed)
     
-    #Match XCMS peaks with SOIs
+    #Match XCMS features with SOIs
     pks <- matchPeaksToSOI(pks, RHermesExp, SOI, RTtol)
-    message(length(which(!is.na(pks$soi))), " XCMS peaks with SOI")
+    message(length(which(!is.na(pks$soi))), " XCMS features with SOI")
     
-    #Extract MS2 information and match with peaks
+    #Extract MS2 information and match with features
     if(!is.na(MS2Exp)){
         pks <- subset(pks, !is.na(pks$soi))
         pks <- retrieveMS2Info(pks, RHermesExp, MS2Exp, RTtol)
         # message(length(which(pks$foundMS2)), " XCMS peaks with MS2")
         message(length(which(!is.na(pks$soi) & pks$foundMS2)),
-                " XCMS peaks with SOI and MS2")
+                " XCMS features with SOI and MS2")
         message("   - Of which ",
                 length(which(!pks$putativeID[!is.na(pks$soi) & pks$foundMS2] %in%
                                  c("No significant hits", "Missing reference spectra"))),
                 " have a putative ID")
     }
     
-    #Filter all peaks without matching SOI
+    #Filter all features without matching SOI
     pks <- subset(pks, !is.na(pks$soi))
     
     
