@@ -197,6 +197,7 @@ calculate_MS2_correlation_from_feature <- function(feature_df){
     })
 }
 
+#' @importFrom xcms featureDefinitions
 #' @export
 mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10){
     pks <- as.data.frame(featureDefinitions(XCMSnExp))
@@ -222,7 +223,6 @@ mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTt
     
     #Filter all features without matching SOI
     pks <- subset(pks, !is.na(pks$soi))
-    
     
     pks <- rename(pks, mzmed = mz, rtmed = rt)
     
