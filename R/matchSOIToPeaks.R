@@ -35,7 +35,6 @@ mergeRHermesXCMS <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10)
     return(XCMSnExp)
 }
 
-
 #' @title matchPeaksToSOI
 #' @description Finds a correspondance between XCMS Chrompeaks and RHermes SOIs
 #'   in order to filter the former and obtain a cleaner peak matrix
@@ -145,20 +144,6 @@ getQuantitativeMatrix <- function(XCMSnExp){
     return(ft)
 }
 
-
-
-plotpks <- function(peakMat){
-    ggplot(peakMat) + 
-        geom_segment(aes(x=rtmin,xend=rtmax,y=mz,yend=mz, color = log10(maxo)))+
-        geom_point(aes(x=rt,y=mz), size = 0.1, color = "tomato", alpha = 0.2)+
-        facet_grid(sample~.) +
-        theme_minimal()
-}
-
-plot_particular_peak <- function(id, XCMSnExp){
-    
-}
-
 extract_MS2_from_feature <- function(XCMSnExp_THS, feature_df){
     pkdata <- as.data.frame(chromPeakData(XCMSnExp_THS))
     feature_df$MS2data <- lapply(feature_df$peakidx, function(peaks){
@@ -168,45 +153,6 @@ extract_MS2_from_feature <- function(XCMSnExp_THS, feature_df){
         return(ms2_df)
     })
     return(feature_df)
-}
-
-plot_MS2_from_feature <- function(feature_df, id){
-    entryMS2 <- feature_df$MS2data[[id]]
-    molecmass <- entryMS2$precmass[[1]]
-    lapply(entryMS2$ssdata, function(query){
-        plot_MS2_from_ssdata(query, molecmass)
-    })
-}
-
-plot_MS2_from_ssdata <- function(query, molecmass){
-    maxint <- max(query$int)
-    query$int <- query$int/maxint * 100
-    bestdf <- query[query$int > 10, ]
-    bestdf$mz <- round(bestdf$mz, 4)
-    moldf <- data.frame(mz = molecmass)
-    
-    subtitle <- ""
-    title <- ""
-    
-    pl <- ggplot() +
-        geom_segment(data = query, aes(x = .data$mz, xend = .data$mz,
-                                       y = 0, yend = .data$int),
-                     color = "black") +
-        geom_point(data = moldf, aes(x = .data$mz, y = 0), shape = 17,
-                   size = 2) +
-        theme_minimal() + ylab("Relative Intensity") +
-        theme(plot.margin = unit(c(1, 0.7, 1, 0.8), "cm"),
-              text = element_text(size = 11, family = "Segoe UI Light"),
-              plot.title = element_text(hjust = 0.5)) +
-        geom_text(data = bestdf, aes(x = .data$mz, y = .data$int + 5,
-                                     label = .data$mz),
-                  family = "Segoe UI Light", check_overlap = TRUE) +
-        scale_x_continuous(limits = c(min(query$mz, molecmass) - 20,
-                                      max(query$mz, molecmass) + 20))+
-        ggtitle(title, subtitle)
-    
-    # ggplotly(pl, height = 400)
-    return(pl)
 }
 
 calculate_MS2_correlation_from_feature <- function(feature_df){
@@ -250,32 +196,6 @@ calculate_MS2_correlation_from_feature <- function(feature_df){
         plots <- lapply(1:nrow(group), function(id){plot_MS2_from_feature(group, id)})
     })
 }
-
-
-# library(dplyr)
-# newpks <- newpks[order(newpks$maxo, decreasing = T),]
-# i <- 5
-# whichSOI <- newpks$soi[[i]]
-# ms2plot <- ggplot(newpks$MS2Data[[i]]$ssdata[[1]]) +
-#     geom_segment(aes(x=mz,xend=mz,y=0,yend=int)) + theme_minimal()
-# 
-# ggplot(sois$peaks[[whichSOI]]) +
-#     geom_point(aes(x=rt, y = log10(rtiv))) +
-#     geom_point(aes(x=rt, y = log10(rtiv)), color = "red",
-#                data = filter(sois$peaks[[whichSOI]],
-#                              between(rt, newpks$rtmin[[i]], newpks$rtmax[[i]])))+
-#     geom_vline(aes(xintercept=rt, color = rtiv),
-#                data = newpks$MS2Data[[i]]$profile[[1]], lty = 3) +
-#     annotation_custom(grob=ggplotGrob(ms2plot), 
-#                       ymin = log10(newpks$maxo[[i]])*2/3,
-#                       ymax=log10(newpks$maxo[[i]]),
-#                       xmin=(sois$end[[whichSOI]]-sois$start[[whichSOI]])/2 +
-#                           sois$start[[whichSOI]],
-#                       xmax=sois$end[[whichSOI]]) +
-#     ggtitle(paste(newpks$formula[[i]], round(newpks$mz,4)),
-#             subtitle = paste("Putative identification:",
-#                              strsplit(newpks$MS2Data[[i]]$results[[1]]$formula[[1]], "#")[[1]][3]))
-
 
 #' @export
 mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10){
