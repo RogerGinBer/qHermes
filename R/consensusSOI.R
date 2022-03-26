@@ -18,6 +18,7 @@
 #' }
 #'@export
 #'@importFrom data.table rbindlist
+#'@importFrom dplyr mutate
 consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
     if(length(SOIids) == 1){stop("Can't run consensus with a single SOI list")}
     if(is.null(minSOI)){
@@ -35,7 +36,7 @@ consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
         return(r)
     }, id = SOIids)
     sdf <- data.table::rbindlist(sdf, fill = TRUE)
-    sdf <-  mutate(sdf,
+    sdf <- dplyr::mutate(sdf,
                    apex = as.numeric(
                        lapply(peaks, function(x){x$rt[which.max(x$rtiv)]}))
     )
