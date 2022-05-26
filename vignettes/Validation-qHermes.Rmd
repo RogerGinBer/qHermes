@@ -1,0 +1,502 @@
+---
+title: "qHermes Validation"
+author: "Roger Giné Bertomeu"
+date: "`r Sys.Date()`"
+output: 
+    rmdformats::readthedown:
+        highlight: tango
+        toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading dependencies
+
+```{r message=FALSE}
+library(S4Vectors)
+library(xcms)
+library(RHermes)
+library(qHermes)
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(magrittr)
+library(BiocParallel)
+library(MetaboAnnotation)
+register(SerialParam())
+```
+
+# Validation 1: Comparing qHermes annotation functions
+
+## Phase 1: Running RHermes on QCs
+
+```{r}
+HermesObj <- readRDS("~/Datasets/Plataforma_RDS/VirginiaNunes_T3pos_ratoli_hilicpos_Hermes.rds")
+```
+
+
+## Phase 2: Running all qHermes annotation functions
+
+```{r}
+data_dir <- "/home/hermes/Datasets/VirginiaNunes/Positive"
+available_files <- list.files(data_dir, pattern = "mzML", full.names = T)
+
+getLabel <- function(x){
+  if(grepl("QC", x)) return("QC")
+  if(grepl("^B", x)) return("Blank")
+  return("Sample")
+}
+
+inj <- read.csv("~/Datasets/VirginiaNunes/VirginiaNunes_T3pos_ratoli_hilic_pos_injectionorder.csv")
+pd <- readxl::read_xlsx("~/Datasets/VirginiaNunes/Mostres_Orines_Virginia.xlsx") %>%
+    full_join(inj, by = c("NrDNA" = "SampleName")) %>%
+    mutate(file = paste0(data_dir, "/", NrDNA, ".mzML"),
+           Group = sapply(NrDNA, getLabel)) %>%
+    arrange(injectionOrder)
+```
+
+
+```{r}
+xcmsObject <- readMSData(pd$file, pdata = AnnotatedDataFrame(pd), mode = "onDisk")
+```
+
+
+### `fastSOI`
+
+```{r}
+# cfp <- ChemFormulaParam(DB = "~/Datasets/DBs/merge_KEGG_ECMDB.csv", ppm = 2)
+# cfp@ionFormulas <- HermesObj@metadata@ExpParam@ionF[[1]]
+# saveRDS(cfp, file = "chemFormulaParam.rds")
+cfp <- readRDS("chemFormulaParam.rds")
+fastXCMS <- fastSOI(xcmsObject, cfp)
+fastXCMS <- groupChromPeaks(fastXCMS,
+                              PeakDensityParam(pd$Group, bw = 5, binSize = 0.01))
+saveRDS(fastXCMS, file = "fastXCMS.rds")
+
+```
+
+
+### `fastSOIFromList`
+
+```{r}
+fastListXCMS <- fastSOIfromList(xcmsObject, HermesObj, 6)
+fastListXCMS <- groupChromPeaks(fastListXCMS,
+                              PeakDensityParam(pd$Group, bw = 5, binSize = 0.01))
+saveRDS(fastListXCMS, file = "fastListXCMS.rds")
+
+```
+
+### `annotateFeaturesFromList`
+
+```{r}
+cwp <- CentWaveParam(ppm=3,peakwidth = c(5,30), snthresh = 3)
+xcmsObject <- findChromPeaks(xcmsObject, cwp)
+xcmsObject <- groupChromPeaks(xcmsObject,
+                              PeakDensityParam(pd$Group, bw = 5, binSize = 0.01))
+annotateListXCMS <- annotateFeaturesList(xcmsObject, HermesObj, 6, RTtol = 5)
+saveRDS(xcmsObject, file = "xcmsObject.rds")
+saveRDS(annotateListXCMS, file = "annotateListXCMS.rds")
+
+annotateXCMS <- annotateFeatures(xcmsObject, cfp)
+saveRDS(annotateXCMS, file = "annotateXCMS.rds")
+
+```
+
+
+### `annotateFeatures`
+
+## Phase 3: Comparing overlaps between functions
+
+```{r include=FALSE}
+fastXCMS <- readRDS("fastXCMS.rds")
+fastListXCMS <- readRDS("fastListXCMS.rds")
+xcmsObject <- readRDS("xcmsObject.rds")
+annotateListXCMS <- readRDS("annotateListXCMS.rds")
+annotateXCMS <- readRDS("annotateXCMS.rds")
+
+```
+
+
+```{r include=FALSE}
+featureOverlap <- function(xcms_query, xcms_target){
+    margin_query <- extractPeakMargin(xcms_query)
+    margin_target <- extractPeakMargin(xcms_target)
+    isContained <- logical(nrow(margin_query))
+    for(i in seq(nrow(margin_query))){
+        current <- margin_query[i,]
+        isContained[i] <- any(!(current$rtmax < margin_target$rtmin |
+                                  current$mzmax < margin_target$mzmin |
+                                  current$rtmin > margin_target$rtmax |
+                                  current$mzmin > margin_target$mzmax))
+    }
+    isContained
+}
+
+extractPeakMargin <- function(obj){
+    idx <- featureDefinitions(obj)$peakidx
+    pks <- chromPeaks(obj)
+    data.table::rbindlist(
+        lapply(idx, .doExtractPeakMargin, pkmatrix = pks)
+    )
+}
+
+.doExtractPeakMargin <- function(pkmatrix, pkidx){
+    pks <- pkmatrix[pkidx,,drop=FALSE]
+    list(mzmin = min(pks[,2]), mzmax = max(pks[,3]),
+         rtmin = min(pks[,5]), rtmax = max(pks[,6]))
+}
+
+```
+
+```{r}
+match_fastList_regular <- featureOverlap(fastListXCMS, xcmsObject)
+match_regular_fastList <- featureOverlap(xcmsObject, fastListXCMS)
+
+library(rlang)
+objs <- list(expr(fastXCMS), expr(annotateXCMS), expr(fastListXCMS), expr(annotateListXCMS),  expr(xcmsObject))
+olaps <- lapply(objs, function(x){lapply(objs, function(y){featureOverlap(eval(x), eval(y))})})
+olaps_abs <- matrix(as.vector(sapply(olaps, function(x){sapply(x, function(y) table(y)["TRUE"])})),
+       ncol=length(objs))
+colnames(olaps_abs) <- paste(as.character(objs), "↓")
+rownames(olaps_abs) <- as.character(objs)
+olaps_abs
+
+olaps_prop <- matrix(as.vector(sapply(olaps, function(x){sapply(x, function(y) prop.table(table(y))["TRUE"]*100)})),
+       ncol=length(objs))
+colnames(olaps_prop) <- paste(as.character(objs), "↓")
+rownames(olaps_prop) <- as.character(objs)
+
+olaps_prop
+
+heatmap(olaps_prop, scale = "none")
+
+margin_fast <- extractPeakMargin(fastXCMS)
+margin_fastList <- extractPeakMargin(fastListXCMS)
+margin_regular <- extractPeakMargin(xcmsObject)
+```
+
+
+```{r}
+delta <- 0.2
+p <- ggplot() +
+  geom_rect(aes(xmin=rtmin,xmax=rtmax,ymin=mzmin-delta,ymax=mzmax+delta), fill = "red",
+            data = margin_fastList[match_fastList_regular,], alpha=0.5) +
+      geom_rect(aes(xmin=rtmin,xmax=rtmax,ymin=mzmin-delta,ymax=mzmax+delta), fill = "blue",
+            data = margin_regular[match_regular_fastList,], alpha=0.5)
+  
+plotly::ggplotly(p)
+```
+
+### PCA analysis
+
+```{r}
+pd <- phenoData(xcmsObject)
+ft <- lapply(objs, function(x){featureValues(eval(x))})
+
+plot_pca <- function(df, scale = T){
+  df[is.na(df)] <- 0
+  pca <- prcomp(t(df), center=T, scale=scale)
+  pca_df <- as.data.frame(pca$x[,c(1,2)]) %>% 
+    cbind(pd@data)
+  ggplot(pca_df) + geom_point(aes(x=PC1, y=PC2, color=Genotipo)) + theme_minimal()
+}
+
+elbow_pca <- function(df, scale = T){
+  df[is.na(df)] <- 0
+  pca <- prcomp(t(df), center=T, scale=scale)
+  return((pca$sdev^2)[c(1:20)] / sum(pca$sdev^2))
+}
+```
+
+
+```{r}
+lapply(ft, plot_pca)
+```
+
+
+```{r}
+lapply(ft, plot_pca, scale = F)
+```
+
+
+```{r}
+e <- do.call(rbind, lapply(ft, elbow_pca))
+
+elb <- cbind(rep(1:20, 5), matrix(sapply(ft, elbow_pca), ncol = 1))
+ggplot(elb) + geom_line(aes(x=as.numeric(V1), y=as.numeric(V2),
+                             group=as.factor(`rep(as.character(objs), each = 20)`),
+                            color=as.factor(`rep(as.character(objs), each = 20)`)))
+```
+
+### Univariant statistics: feature selection
+
+```{r}
+pd <- as.data.frame(phenoData(xcmsObject)@data)
+
+ko <- pd$Genotipo == "Slc7a9-/-"
+wt <- pd$Genotipo == "WT" & pd$FondoGenetico == "C57BL/6J"
+
+res <- lapply(ft, function(ft_list){
+  apply(ft_list, 1, function(feature){
+    try(t.test(na.omit(feature[ko]), na.omit(feature[wt])))
+  })
+})
+
+pval <- lapply(res, function(x){lapply(x, function(y) if(class(y)!="try-error") y$p.value else 1)})
+pval_adj <- lapply(pval, function(x) lapply(x, p.adjust(x, method = "fdr")))
+
+fc <- lapply(ft, function(ft_list){
+  apply(ft_list, 1, function(feature){
+    x <- mean(na.omit(feature[ko]))
+    y <- mean(na.omit(feature[wt]))
+    log2(x / y)
+  })
+})
+global_avg <- lapply(ft, function(ft_list){
+  apply(ft_list, 1, function(feature){
+    mean(c(na.omit(feature[ko]), na.omit(feature[wt])))
+  })
+})
+
+
+stat_dfs <- mapply(function(x,y,z,w) data.frame(pvalue=unlist(x), padj=unlist(w),
+                                                log2FC=unlist(y), AvgInt = unlist(z)),
+                   x=pval, y=fc, z=global_avg, w=pval_adj, SIMPLIFY = F)
+
+lapply(stat_dfs, function(df){
+  ggplot(df) +
+    geom_point(aes(x=log2FC,y=-log10(padj), color = log10(AvgInt)), size = 0.4) +
+    geom_hline(yintercept = -log10(0.05))+
+    geom_vline(xintercept = c(-2,2))+
+    scale_color_viridis_c(option = "magma", direction = -1)
+})
+
+#Efecte de l'ajust dels pvalors
+lapply(stat_dfs, function(df){
+  ggplot(df) +
+    geom_point(aes(x=log10(pvalue),y=log10(padj), color = log10(AvgInt)), size = 0.4) +
+    geom_abline(slope = 1)+
+    scale_color_viridis_c(option = "magma", direction = -1)
+})
+```
+
+
+
+# Validation 2: Quantifying annotation specificity with 13C-labelled E. coli 
+
+```{r}
+hmdb <- read.csv("~/Datasets/DBs/Merge_HMDB_ChEBI_Peptides.csv")
+hmdb$numC <- lapply(MetaboCoreUtils::countElements(hmdb$MolecularFormula), function(x) try(x[["C"]]))
+ggplot(hmdb) +
+  geom_point(aes(x=MonoisotopicMass, y=as.numeric(numC)), alpha=0.6, color = "grey40") +
+  geom_abline(slope=1/12, intercept=0, color="red") + ylab("Número de carbonos")+
+  xlab("Masa monoisotópica")+
+  ggtitle("Relación entre el peso molecular y el número de átomos de carbono") +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5)) 
+ggsave("./PM_vs_C.png", device = "png")
+  
+
+```
+
+```{r}
+files <- list.files("~/Datasets/HermesResults/Ecoli/MS1_positive/", pattern = "mzML", full.names = T)[c(6,9,3)]
+labObject <- readMSData(files, mode = "onDisk")
+labHermes <- readRDS("~/Datasets/HermesResults/Ecoli/Hermes_objects/Pos13CSOI.rds")
+```
+
+```{r}
+cfp <- readRDS("chemFormulaParam.rds")
+
+ECO_fastXCMS <- fastSOI(labObject, cfp)
+ECO_fastXCMS <- groupChromPeaks(ECO_fastXCMS,
+                              PeakDensityParam(c("Blank", "QC", "13C"), bw = 5, binSize = 0.01))
+saveRDS(ECO_fastXCMS, file = "ECO_fastXCMS.rds")
+
+ECO_fastListXCMS <- fastSOIfromList(labObject, labHermes, 4)
+ECO_fastListXCMS <- groupChromPeaks(ECO_fastListXCMS,
+                              PeakDensityParam(c("Blank", "QC", "13C"), bw = 5, binSize = 0.01))
+saveRDS(ECO_fastListXCMS, file = "ECO_fastListXCMS.rds")
+
+cwp <- CentWaveParam(ppm = 3, peakwidth = c(5,30), snthresh = 3)
+labObject <- findChromPeaks(labObject, cwp)
+labObject <- groupChromPeaks(labObject,
+                              PeakDensityParam(c("Blank", "QC", "13C"), bw = 5, binSize = 0.01))
+saveRDS(labObject, file = "ECO_xcmsObject.rds")
+
+ECO_annotateListXCMS <- annotateFeaturesFromList(labObject, labHermes, 4, RTtol = 5)
+saveRDS(ECO_annotateListXCMS, file = "ECO_annotateListXCMS.rds")
+
+ECO_annotateXCMS <- annotateFeatures(labObject, cfp)
+saveRDS(ECO_annotateXCMS, file = "ECO_annotateXCMS.rds")
+```
+
+
+```{r}
+# feats <- featureDefinitions(labObject)
+# keep <- (feats$QC == 1)
+# labObject <- filterFeatureDefinitions(labObject, keep)
+xcms_lab <- isoLabelling(labObject, c(3, 2), 2)
+saveRDS(xcms_lab, "xcms_lab.rds")
+
+fast_lab <- isoLabelling(ECO_fastXCMS, c(3, 2), 2)
+saveRDS(fast_lab, "fast_lab.rds")
+
+fastlist_lab <- isoLabelling(ECO_fastListXCMS, c(3, 2), 2)
+saveRDS(fastlist_lab, "fastlist_lab.rds")
+
+annotate_lab <- isoLabelling(ECO_annotateXCMS, c(3, 2), 2)
+saveRDS(annotate_lab, "annotate_lab.rds")
+
+annotatelist_lab <- isoLabelling(ECO_annotateListXCMS, c(3, 2), 2)
+saveRDS(annotatelist_lab, "annotatelist_lab.rds")
+
+labelling <- list(
+  XCMS = xcms_lab,
+  fastSOI = fast_lab,
+  fastSOIFromList = fastlist_lab,
+  annotate = annotate_lab,
+  annotateFromList = annotatelist_lab
+)
+saveRDS(labelling, "labelling_results.rds")
+
+xcms_lab <- readRDS("xcms_lab.rds")
+fast_lab <- readRDS("fast_lab.rds")
+fastlist_lab <- readRDS("fastlist_lab.rds")
+annotate_lab <- readRDS("annotate_lab.rds")
+annotatelist_lab <- readRDS("annotatelist_lab.rds")
+```
+
+```{r}
+library(cowplot)
+
+df <- as.data.frame(fastlist_lab)
+colnames(df) <- c("13C", "12C")
+df$Corrected <- df$`13C` - df$`12C`
+df$Corrected <- sapply(df$Corrected, function(x) max(x, 0))
+df$Feature <- seq(nrow(df))
+df <- reshape2::melt(df, id.vars = "Feature")
+df <- filter(df, variable != "Corrected")
+p <- ggplot(df) + 
+  geom_histogram(aes(x=value, fill=variable), alpha = 0.5,
+                 position = "identity", binwidth = 0.5) +
+  theme_minimal() + scale_x_continuous(limits=c(3,60)) +
+  xlab("Número medio de carbonos marcados") + ylab("Frecuencia") + theme(legend.title = element_blank())
+inset <- ggplot(df) + 
+  geom_histogram(aes(x=value, fill=variable), alpha = 0.5,
+                 position = "identity", binwidth = 0.5) +
+  theme_minimal() + scale_x_continuous(limits=c(-0.5,3)) + theme(legend.position = "none")+xlab("")+ylab("`")
+gg_inset_map1 = ggdraw() +
+  draw_plot(p) +
+  draw_plot(inset, x = 0.5, y = 0.4, width = 0.3, height = 0.5)
+gg_inset_map1
+ggsave("Comparacion12C13C", device="png", width = 1800, height = 1200, units = "px")
+```
+
+```{r}
+plotMarcaje <- function(df, title = ""){
+    df <- as.data.frame(df)
+    colnames(df) <- c("13C", "12C")
+    df$Corrected <- df$`13C` - df$`12C`
+    df$Corrected <- sapply(df$Corrected, function(x) max(x, 0))
+    df$Feature <- seq(nrow(df))
+    df <- reshape2::melt(df, id.vars = "Feature")
+    df <- filter(df, variable != "Corrected")
+    p <- ggplot(df) + 
+      geom_histogram(aes(x=value, fill=variable), alpha = 0.5,
+                     position = "identity", binwidth = 0.5) +
+      theme_minimal() + scale_x_continuous(limits=c(3,60)) +
+      xlab("Número medio de carbonos marcados") + ylab("Frecuencia") + theme(legend.title = element_blank())+
+      ggtitle(title) + theme(plot.title = element_text(hjust = 0.5)) 
+    inset <- ggplot(df) + 
+      geom_histogram(aes(x=value, fill=variable), alpha = 0.5,
+                     position = "identity", binwidth = 0.5) +
+      theme_minimal() + scale_x_continuous(limits=c(-0.5,3)) + theme(legend.position = "none")+xlab("")+ylab("`")
+    gg_inset_map1 <- ggdraw() +
+      draw_plot(p) +
+      draw_plot(inset, x = 0.5, y = 0.4, width = 0.3, height = 0.5)
+    gg_inset_map1
+# ggsave("Comparacion12C13C", device="png", width = 1800, height = 1200, units = "px")
+
+}
+
+plotMarcaje(annotate_lab, "AnnotateFeatures")
+ggsave("plotMarcajeAnnotateFeatures.svg", device = "svg")
+
+plot_xcms <- plotMarcaje(xcms_lab, "XCMS Convencional")
+ggsave("plotMarcajeXCMS.svg", device = "svg")
+
+plot_annotatelist <- plotMarcaje(annotatelist_lab, "AnnotateFeaturesFromList")
+ggsave("plotMarcajeAnnotateFeaturesList.svg", device = "svg")
+
+plot_fast <- plotMarcaje(fast_lab, "FastSOI")
+ggsave("plotMarcajeFastSOI.svg", device = "svg")
+
+plot_fastlist <- plotMarcaje(fastlist_lab, "FastSOIFromList")
+ggsave("plotMarcajeFastSOIList.svg", device = "svg")
+
+```
+
+```{r}
+
+tbl <- rbind(table(xcms_lab[,1] > 1),
+        table(annotate_lab[,1] > 1),
+        table(fast_lab[,1] > 1),
+        table(fastlist_lab[,1] > 1),
+        table(annotatelist_lab[,1] > 1)
+      )
+tbl <- as.data.frame(tbl)
+colnames(tbl) <- c("Unlabelled", "Labelled")
+tbl$method <- factor(c("XCMS", "AF", "FastSOI", "FastSOIFromList", "AFL"), levels = c("XCMS", "AF", "AFL", "FastSOI", "FastSOIFromList"))
+tbl <- reshape2::melt(tbl, id.vars="method")
+ggplot(tbl) + geom_col(aes(x=method,y=value, fill = variable), position = "stack") +
+    theme_minimal()
+ggsave("LabProportions.svg", device = "svg", height = 5)
+```
+
+
+```{r}
+df <- rbind(
+  mutate(as.data.frame(fast_lab), Method = "FastSOI"),
+  mutate(as.data.frame(fastlist_lab), Method = "FastSOIFromList"),
+  mutate(as.data.frame(annotate_lab), Method = "AnnotateFeatures"),
+  mutate(as.data.frame(annotatelist_lab), Method = "AnnotateFeaturesFromList"),
+  mutate(as.data.frame(xcms_lab), Method = "Regular XCMS")
+)
+colnames(df) <- c("13C", "12C", "Method")
+df$Feature <- seq(nrow(df))
+df <- reshape2::melt(df, id.vars = c("Feature", "Method"))
+ggplot(df) + 
+  geom_histogram(aes(x=value, fill=variable), alpha = 0.8, position = "identity", binwidth = 0.5) +
+  facet_wrap(vars(Method), scales = "free_y") + 
+  theme_minimal()+
+  xlab("Número medio de carbonos marcados") + ylab("Frecuencia")
+
+ggplot(df) + 
+  geom_histogram(aes(x=value, fill=variable), alpha = 0.8, position = "identity", binwidth = 0.5) +
+  facet_wrap(vars(Method), scales = "free_y") + 
+  scale_y_continuous(limits=c(0,300))+
+  theme_minimal()+
+  xlab("Número medio de carbonos marcados") + ylab("Frecuencia")
+```
+
+
+### Network analysis
+```{r}
+labObject <- readRDS("./ECO_xcmsObject.rds")
+pks <- chromPeaks(labObject)
+unlab_id <- which(pks[,"sample"] == 2)
+match_peak_feat <- lapply(featureDefinitions(labObject)$peakidx, function(idx){
+    unlab_id[unlab_id %in% idx]
+})
+```
+  
+
+
+## Session information
+
+```{r}
+sessionInfo()
+```
+

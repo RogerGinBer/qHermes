@@ -13,7 +13,7 @@
 #' @importFrom dplyr select rename
 #' @importFrom BiocParallel SerialParam
 #' @export
-fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000){
+fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30)){
     ppm <- ChemFormulaParam@ppm
     ionf <- ChemFormulaParam@ionFormulas
     message("Calculating fast SOIs")
@@ -22,13 +22,13 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000){
     
     ##Processing each file
     files <- fileNames(MSnExp)
-    SOIs <- bplapply(seq_along(files),
-                      function(i) {
+    SOIs <- bplapply(seq_along(files), function(i) {
+        message("Current file: ", files[i], " ", Sys.time())
         cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
         pks <- qHermes:::extractToHermes(cur_MSnExp)
-        mzs <- unlist(pks[[3]][,1])
-        ints <- unlist(pks[[3]][,2])
-
+        mzs <- pks[[3]]$mz
+        ints <- pks[[3]]$rtiv
+        
         ## Define the values per spectrum:
         h <- pks[[2]]
         valsPerSpect <- h$originalPeaksCount
@@ -52,34 +52,29 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000){
             sois$length <- sois$end - sois$start
             sois$formula <- x[1]
             sois$peaks <- apply(sois, 1, function(row){
-                data.frame(rt = scantime[row[1]:row[2]],
-                           rtiv = eic$intensity[row[1]:row[2]])
+                x <- row[1]:row[2]
+                l <- list(rt = scantime[x], rtiv = eic$intensity[x])
+                class(l) <- "data.frame"
+                l
             })
             sois$mass <- as.numeric(x[2]) 
-            sois <- select(sois, start, end, length, formula, peaks, mass)
+            sois <- sois[, c("start", "end", "length", "formula", "peaks", "mass")]
             return(sois)
         })
         if(is.null(SL)){return()}
         SL <- do.call("rbind", SL)
-        
-        suppressMessages({
-            SL <- RHermes:::groupShort(SL, maxlen = 30,
-                                    BPPARAM = BiocParallel::SerialParam())
-        })
-        SL <- rename(SL, rtmin = start, rtmax = end, mz = mass)
-        
+        SL <- dplyr::filter(SL, length >= peakwidth[1])
+        suppressMessages({SL <- groupShort(SL, maxlen = peakwidth[2])})
+        SL <- dplyr::rename(SL, rtmin = start, rtmax = end, mz = mass)
+        SL <- dplyr::filter(SL, length >= peakwidth[1])
         SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-6)
         SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-6)
         SL$into <- sapply(SL$peaks, function(x){sum(x[,2])})
         SL$intb <- SL$into
         SL$maxo <- sapply(SL$peaks, function(x){max(x[,2])})
         SL$rt <- sapply(SL$peaks, function(x){x[which.max(x[,2]),1]})
-        SL <- SL[SL$length > 5,] #Filter by min time
         SL$sample <- i
-        
-        ## Do some filtering here
-        
-        return(SL)
+        SL
     },  BPPARAM = bpparam())
     SOIs <- do.call("rbind", SOIs)
     row.names(SOIs) <- NULL
@@ -124,6 +119,41 @@ soi_from_eic <- function(eic, thr = 1000, tol = 5){
   return(cbind(scstart = st, scend = end))
 }
 
+groupShort <- function(Groups, maxlen){
+  message("Shortening and selecting long groups:")
+  SG <- filter(Groups, length <= maxlen)
+  LG <- filter(Groups, length > maxlen)
+  LG <- lapply(seq_len(nrow(LG)), parallelGroupShort, LG, maxlen)
+  LG <- do.call(rbind, LG)
+  return(rbind(SG, LG))
+}
+
+
+#Experimental Centwave approach to SOI partitioning
+
+parallelGroupShort <- function(i, LG, maxlen){
+  ms1data <- LG$peaks[[i]]
+  curGR <- LG[i,]
+  
+  #Divide long traces into equal-sized smaller traces
+  times <- seq(from = curGR[1, 1][[1]], to = curGR[1, 2][[1]],
+               length.out = ceiling(curGR[1, 3][[1]] / maxlen) + 1)
+  deltat <- times[2] - times[1]
+  NewGR <- data.table(start = times[-length(times)], end = times[-1],
+                      length = deltat, formula = curGR$formula,
+                      peaks = curGR$peaks, mass = curGR$mass)
+  
+  #Data point redistribution within each new SOI
+  NewGR[, "peaks"] <- apply(NewGR, 1, function(x) {
+    pks <- x[5][[1]]
+    return(pks[between(pks$rt, x[1][[1]], x[2][[1]]), ])
+  })
+  return(NewGR)
+}
+
+
+
+
 
 #'@export
 filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
@@ -167,7 +197,7 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3,
     files <- fileNames(MSnExp)
     SOIs <- bplapply(seq_along(files), single_fastSOI_from_list,
                      MSnExp = MSnExp, target_list = target_list, ppm = ppm,
-                     rtwin = rtwin, tol = tol, thr = thr,
+                     rtwin = rtwin, tol = tol, thr = thr, files = files,
                      BPPARAM = bpparam()
     )
     SOIs <- do.call("rbind", SOIs)
@@ -191,8 +221,37 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3,
     return(MSnExp)
 }
 
-single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol,
-                                      thr){
+fastSOIfromDF <- function (MSnExp, target_list, ppm = 5, SOI_id = 1, rtwin = 3, tol = 3, 
+                             thr = 1000) {
+  target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
+  target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
+  files <- fileNames(MSnExp)
+  SOIs <- bplapply(seq_along(files), single_fastSOI_from_list,
+                   MSnExp = MSnExp, target_list = target_list, ppm = ppm,
+                   rtwin = rtwin, tol = tol, thr = thr,
+                   BPPARAM = bpparam()
+  )
+  SOIs <- do.call("rbind", SOIs)
+  row.names(SOIs) <- NULL
+  MSnExp <- as(MSnExp, "XCMSnExp")
+  if (nrow(SOIs) > 0) {
+    names <- c("mz", "mzmin", "mzmax", "rt", "rtmin", "rtmax", 
+               "into", "intb", "maxo", "sn", "sample")
+    SOIs$sn <- 1000
+    cp_mat <- SOIs[, names] %>% as.matrix() %>% apply(., 2, as.numeric)
+    row.names(cp_mat) <- seq(nrow(SOIs))
+    chromPeaks(MSnExp) <- cp_mat
+    chromPeakData(MSnExp) <- S4Vectors::DataFrame(
+      ms_level = rep(as.integer(1), times=nrow(SOIs)),
+      is_filled = rep(TRUE, times=nrow(SOIs)),
+      row.names = seq(nrow(SOIs))
+    )
+  }
+  return(MSnExp)
+}
+
+single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol, thr, files){
+    message("Current file: ", files[i], " ", Sys.time())
     cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
     raw_data <- extractToHermes(cur_MSnExp)
     mzs <- unlist(raw_data[[3]][, 1])
@@ -354,4 +413,14 @@ getCorrectMatrix <- function(MsnExp, cwp, rtp){
         rtCorr[[i]] <- rtc
     }
     return(rtCorr)
+}
+
+#' @export
+SOIFeatureDefinitions <- function(object){
+  def <- featureDefinitions(object) %>% as.data.frame()
+  pk_data <- chromPeakData(object) %>% as.data.frame()
+  def$formula <- lapply(def$peakidx, function(id){pk_data$formula[id[1]]})
+  def$anot <- lapply(def$peakidx, function(id){pk_data$anot[id[1]]})
+  def <- cbind(def, featureValues(object, value = "maxo") %>% as.data.frame())
+  return(def)
 }

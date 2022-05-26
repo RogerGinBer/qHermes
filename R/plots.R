@@ -1,3 +1,4 @@
+
 #'@export
 plotFeature <- function(XCMSnExp, feature, soi = NULL){
     cp <- chromPeaks(XCMSnExp)
@@ -47,8 +48,16 @@ plotFeature <- function(XCMSnExp, feature, soi = NULL){
     subplot(p1, p2, nrows = 2, heights = c(0.9, 0.1), which_layout = 1)
 } 
 
+#'@title plotFeatures
+#'@description `plotFeatures` creates a plot of the XIC profiles of the peaks
+#' grouped in a single feature.
+#' 
+#'@param XCMSnExp An XCMSnExp object with processed features (ie. after running
+#'  `groupChromPeaks`)
+#'@param id `numeric`: The number (row index) of the feature to plot.
+#'@seealso plotSummarizedExp
 #' @export
-plotFeaturesMerged <- function(XCMSnExp, id){
+plotFeatures <- function(XCMSnExp, id, log = TRUE){
     ft <- as.data.frame(featureDefinitions(XCMSnExp))
     pks <- chromPeaks(XCMSnExp)
     pkid <- ft$peakidx[[id]]
@@ -56,7 +65,6 @@ plotFeaturesMerged <- function(XCMSnExp, id){
     chrom <- xcms::chromatogram(xcmsExp,
                        mz = c(min(cur_pks[,2]), max(cur_pks[,3])),
                        rt = c(min(cur_pks[,5]), max(cur_pks[,6])))
-    
     chromData <- lapply(chrom@.Data, function(XChrom){
         df <- as.data.frame(XChrom) 
         df$intensity[is.na(df$intensity)] <- 0
@@ -66,17 +74,34 @@ plotFeaturesMerged <- function(XCMSnExp, id){
     chromData <- do.call(rbind, chromData)
     fnames <- sub("\\.mz[xX]?ML$", "", basename(fileNames(XCMSnExp)))
     chromData$sample <- fnames[chromData$sample]
-    print(ggplot(chromData) +
+    
+    p <- ggplot(chromData) +
         geom_point(aes(x=rtime, y=intensity, color = as.factor(sample))) +
         # geom_area(aes(x=rtime, y=intensity, color = as.factor(sample), fill = as.factor(sample)), alpha = 0.2) +
         labs(color = "Sample")+
-        scale_y_log10()+
         ggtitle(label = paste("mz:", round(min(cur_pks[,2]),4), "-", round(max(cur_pks[,3]),4)),
-                subtitle = paste("PutativeID:", ft$putativeID[[id]])) +
+                subtitle = paste0("Annotation: ", paste(ft$formula[[id]], collapse = " or "), "\n",
+                                 "PutativeID: ", ft$putativeID[[id]])) +
         theme_minimal() +
         theme(legend.position="bottom") +
-        guides(color = guide_legend(nrow = 3, byrow = TRUE)))
+        guides(color = guide_legend(nrow = 3, byrow = TRUE))
+    
+    if (log) p <- p + scale_y_log10()
+    
+    print(p)
 }
+
+#'@title plotSummarizedExp
+#'@seealso plotFeatures
+#'@importFrom SummarizedExperiment assay
+plotSummarizedExp <- function(SummarizedExp, XCMSnExp, ...){
+    ft <- as.data.frame(featureDefinitions(XCMSnExp))
+    ids <- which(rownames(ft) %in% rownames(assay(SummarizedExp)))
+    for(i in ids){
+        plotFeatures(XCMSnExp, i, ...)
+    }
+}
+
 
 plot_MS2_from_feature <- function(feature_df, id){
     entryMS2 <- feature_df$MS2data[[id]]

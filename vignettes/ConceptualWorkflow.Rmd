@@ -16,15 +16,15 @@ register(SerialParam())
 
 
 ```{r}
-knitr::opts_chunk$set(root.dir = "/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/")
+knitr::opts_chunk$set(root.dir = "~/Datasets/HermesResults/Ecoli/")
 ```
 
 
 ## Perform XCMS peak-picking
 
 ```{r cache = TRUE}
-files <- list.files(path = "/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/MS1_positive/",
-                    pattern = "70-1000.*mzML", full.names = TRUE)
+files <- list.files(path = "~/Datasets/HermesResults/Ecoli/MS1_positive/",
+                    pattern = "70-1000.*mzML", full.names = TRUE)[3:5]
 msdata <- readMSData(files, mode = "onDisk")
 
 cwp <- CentWaveParam(ppm = 5, peakwidth = c(10,60), snthresh = 0)
@@ -35,20 +35,20 @@ xcmsExp <- findChromPeaks(msdata, cwp)
 ## Merge RHermes information (peaks)
 
 ```{r}
-RHermesExp <- readRDS("/media/metabohermes/Toshiba HDD/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
-merged_object <- qHermes::mergeRHermesXCMS(xcmsExp, RHermesExp, 4, 1)
+RHermesExp <- readRDS("~/Datasets/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
+# merged_object <- qHermes::mergeRHermesXCMS(xcmsExp, RHermesExp, 4, 1)
 ```
 
 ### Visualize results
 
 ```{r}
-cpdata <- chromPeakData(merged_object) %>% as.data.frame()
+# cpdata <- chromPeakData(merged_object) %>% as.data.frame()
 ```
 
 ## Merge RHermes information (features)
 
 ```{r}
-xcmsExp <- groupChromPeaks(xcmsExp, PeakDensityParam(c("13C", "13C", "B", "12C", "12C"),
+xcmsExp <- groupChromPeaks(xcmsExp, PeakDensityParam(c("B", "12C", "12C"),
                                                      bw = 2,
                                                      minFraction = 0,
                                                      binSize = 0.01))
@@ -56,17 +56,114 @@ xcmsExp <- groupChromPeaks(xcmsExp, PeakDensityParam(c("13C", "13C", "B", "12C",
 
 
 ```{r}
-merged_object_feat <- mergeRHermesXCMSFeatures(xcmsExp, RHermesExp, 4, 1)
+merged_object_feat <- annotateFeatures(xcmsExp, RHermesExp, 4, 1, filter = T, quantifyMissingSOI = T)
 features <- featureDefinitions(merged_object_feat) %>% as.data.frame()
 ```
 
 ```{r}
-plotFeaturesMerged(merged_object_feat, 43)
+library(pmp)
+library(SummarizedExperiment)
+library(xcms)
+
+sumExp <- quantify(merged_object_feat, value = "into")
+sumExp <- pmp::filter_peaks_by_blank(sumExp,
+                                     fold_change = 3,
+                                     classes = c("Blank", "QC", "QC"),
+                                     blank_label = "Blank", qc_label = "QC",
+                                     remove_peaks = T, remove_samples = T) %>%
+          pmp::filter_peaks_by_rsd(max_rsd = 35, classes = c("QC", "QC"), qc_label = "QC")
+assay(sumExp)
+
+good <- sumExp[!rowData(sumExp)$filled,]
+filled_in <- sumExp[rowData(sumExp)$filled,]
+
+
+pdf("featureTest_good.pdf")
+plotSummarizedExp(good, merged_object_feat)
+dev.off()
+
+pdf("featureTest_filled.pdf")
+plotSummarizedExp(filled_in, merged_object_feat)
+dev.off()
 ```
 
 
+```{r}
+library(Spectra)
+library(MsCoreUtils)
+library(MetaboCoreUtils)
+library(MetaboAnnotation)
+library(enviPat)
+
+sp <- xcms::featureSpectra(merged_object_feat, 1, return.type = "List",
+                           features = 979,
+                           method = "closest_rt")
+targetfeat <- features[979, ]
+anot <- standardizeFormula(targetfeat$formula[[1]])
+data(isotopes, package = "enviPat")
+checked <- enviPat::check_chemform(isotopes, chemforms = anot)
+pat <- enviPat::isowrap(isotopes, checked = checked, resmass = F, resolution = 120000)
+filt_sp <- filterMzValues(sp[[1]], mz = pat[[1]][,1], ppm = 3)
+
+SpectraVis::plotlySpectra(filt_sp[1])
+
+m <- data.frame(mz = mz(filt_sp)[[1]],
+                intensity = intensity(filt_sp)[[1]])
+
+colnames(pat[[1]])[1] <- "mz"
+match <- matchValues(m, pat[[1]], param = ValueParam(ppm = 3), valueColname = c("mz"))
+
+closest(m$mz, pat[[1]][,1], ppm = 3)
+
+isotopologues(m, ppm = 3)
+
+#' @importFrom enviPat check_chemform isowrap
+#' @importFrom xcms featureDefinitions featureSpectra
+#' @importFrom MetaboCoreUtils standardizeFormula
+featureFidelity <- function(XCMSnExp){
+    ft <- as.data.frame(featureDefinitions(XCMSnExp))
+    ft$id <- seq(nrow(ft))
+    data(isotopes, package = "enviPat", envir = environment())
+    fidelity <- apply(ft, 1, function(x){
+        fs <- x["formula"]
+        lapply(fs, function(formula, id = x[["id"]]){
+            formula <- standardizeFormula(formula)
+            checked <- check_chemform(isotopes, chemforms = formula)
+            pattern <- isowrap(isotopes, checked = checked, resmass = F,
+                               resolution = 120000, threshold = 1)[[1]]
+            spec <- featureSpectra(XCMSnExp, msLevel = 1,
+                                   return.type = "Spectra",
+                                   features = id,
+                                   method = "closest_rt")[1]
+            hits <- closest(pattern[,1], mz(spec)[[1]], tolerance = 0, ppm = 3)
+            query <- intensity(spec)[[1]][hits]
+            target <- pattern[,2]
+            if(all(is.na(query))) return(-Inf)
+            query[is.na(query)] <- 0
+            
+            #Filter out low intensity isotopes (theoretical below thrInt)
+            thrInt <- 1000
+            tooLow <- (query[1] * (target / 100)) <  thrInt
+            query <- query[!tooLow]
+            target <- target[!tooLow]
+            if(length(query) == 0) return(-Inf)
+            .isofidelity(query, target)
+        })
+    })
+    fidelity
+}
+
+.isofidelity <- function(query, pattern){
+    query <- query/sum(query)
+    pattern <- pattern/sum(pattern)
+    probs <- mapply(function(f, p){
+        .erfc(log(f / p) / (sqrt(2) * log((f + 0.03) / f)))
+    }, query, pattern)
+    sum(log(probs[!is.nan(probs)]))
+}
+
+.erfc <- function(x) 2 * pnorm(x * sqrt(2), lower.tail = FALSE)
 
 
-
-
+```
 

@@ -26,7 +26,7 @@ library(RHermes)
 ```
 
 ```{r Testing the modified ROI-generating function}
-file <- "D:/HermesResults/Ecoli/MS1_positive/UNL_Ecoli_MS1_pos_70-1000_01.mzML"
+file <- "/media/hermes/Toshiba HDD/HermesResults/Ecoli/MS1_positive/UNL_Ecoli_MS1_pos_70-1000_01.mzML"
 data <- openMSfile(file)
 h <- header(data)
 pks <- do.call(rbind, peaks(data))
@@ -42,7 +42,6 @@ scant <- h$retentionTime
 roi <- centWave_orig(mzs, ints, scant, valsPerSpect,
                       ppm = 3, prefilter = c(3,100),
                           peakwidth = c(10,60),
-                          mzdiff = -1e-2,
                           snthresh = 6,
                           noise = 0)
 roi <- do.call(rbind, roi)
@@ -66,19 +65,21 @@ pkscans <- list()
 #over an over again
 for (j in 1:nrow(roi)) {
     if(j%%100 == 0){print(j)}
-    j <- roi[j,]
-    rt1 <- j$rtmin; rt2 <- j$rtmax
-    mz1 <- j$mzmin; mz2 <- j$mzmax
+    cur <- roi[j,]
+    rt1 <- cur$rtmin; rt2 <- cur$rtmax
+    mz1 <- cur$mzmin; mz2 <- cur$mzmax
     cur_scans <- filter(raw, between(mz, mz1, mz2) &
-                            between(rt, rt1, rt2))
+                            between(rt, rt1, rt2)) %>%
+      mutate(xcms_id = j)
     cnt <- cnt + nrow(cur_scans)
     pkscans <- c(pkscans, list(cur_scans))
-
 }
 pkscans <- rbindlist(pkscans)
 res <- list(pkscans = pkscans)
 
+pkscans %>% group_by(xcms_id) %>% summarise(n()) %>% .[,2] %>% unlist %>% unname %>% sort %>% plot
 
+ecoliPos <- readRDS("/media/hermes/Toshiba HDD/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
 total <- nrow(PL(ecoliPos,2)@raw)
 anotated <- nrow(PL(ecoliPos,2)@peaklist %>% distinct())
 crude <- select(SOI(ecoliPos, 2)@PlotDF, c("rtiv", "rt")) %>% distinct() %>% nrow()
@@ -89,7 +90,7 @@ print(paste("A", round(nrow(res$pkscans)/total*100, 3),
 
 #Intersection with peaklist, which contains all "annotated data points" but where SOI
 #have not been detected yet.
-intersection <- dplyr::intersect(res$pkscans,
+intersection <- dplyr::intersect(res$pkscans[,1:3],
                                  select(PL(ecoliPos, 2)@peaklist,
                                         c("mz", "rtiv", "rt")))
 anot_percentage <- nrow(intersection) / nrow(res$pkscans) * 100
@@ -215,10 +216,11 @@ df <- xcms::featureDefinitions(grouped) %>% as.data.frame()
 ```{r}
 library(qHermes)
 library(RHermes)
-ecoliPos <- readRDS("D:/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
-fil <- list.files("D:/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)
+ecoliPos <- readRDS("~/Datasets/HermesResults/Ecoli/Hermes_objects/PosResults.rds")
+fil <- list.files("~/Datasets/HermesResults/Ecoli/MS1_positive", "mzML", full.names = T)[c(6,9,10,3,4)]
 ms <- MSnbase::readMSData(fil, mode = "onDisk")
-ecoliPos@data@SOI[[1]]@SOIList <- ecoliPos@data@SOI[[1]]@SOIList[FilterSOIListIndexes,]
+
+# ecoliPos@data@SOI[[1]]@SOIList <- ecoliPos@data@SOI[[1]]@SOIList[FilterSOIListIndexes,]
 # or another SOIList
 quickSOI <- fastSOIfromList(MSnExp=ms, struct= ecoliPos, SOI_id = 1, rtwin=10)
 
@@ -249,3 +251,112 @@ res <- featureValues(quickSOI)
 feats <- featureDefinitions(quickSOI)
 feats <- as.data.frame(feats)
 ```
+
+```{r}
+XCMSnExp <- findChromPeaks(ms, CentWaveParam(5, c(5,25)))
+res <- matchSOIToPeaks(XCMSnExp, ecoliPos, 4)
+
+ft <- xcms::groupChromPeaks(XCMSnExp,
+                            PeakDensityParam(
+                              c("B", "B", "S", "S", "L"),
+                              binSize = 0.05,
+                              bw = 20,
+                              minFraction = 0.4)
+                            )
+q <-xcms::quantify(ft, "maxint")
+q <- q@assays@data@listData[["raw"]]
+q[is.na(q)] <- 0
+
+fc <- log10((q[,2] + 1) / (q[,1] + 1))
+hist(fc, breaks = 100, main = "Sample vs Blank")
+fc <- log10((q[,3] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "Sample vs Sample-Replicate")
+fc <- log10((q[,4] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "Labelled vs Sample")
+
+copy <- XCMSnExp #We save a copy, since we modify the object
+
+#### ChromPeaks that match a SOI ####
+
+good_pks_id <- row.names(res$newpks)
+chromPeaks(XCMSnExp) <- XCMSnExp@msFeatureData$chromPeaks[
+   row.names(XCMSnExp@msFeatureData$chromPeaks) %in% good_pks_id, 
+]
+chromPeakData(XCMSnExp) <- chromPeakData(XCMSnExp)[
+   row.names(chromPeakData(XCMSnExp)) %in% good_pks_id, 
+]                                         
+
+ft <- xcms::groupChromPeaks(XCMSnExp,
+                            PeakDensityParam(
+                              c("B", "B", "S", "S", "L"),
+                              binSize = 0.05,
+                              bw = 20,
+                              minFraction = 0.4)
+                            )
+q <-xcms::quantify(ft, "maxint")
+q <- q@assays@data@listData[["raw"]]
+q[is.na(q)] <- 0
+
+
+fc <- log10((q[,2] + 1) / (q[,1] + 1))
+hist(fc, breaks = 100, main = "Match: Sample vs Blank")
+fc <- log10((q[,3] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "Match: Sample vs Sample-Replicate")
+fc <- log10((q[,4] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "Match: Labelled vs Sample")
+
+
+XCMSnExp <- copy
+
+#### ChromPeaks that don't match a SOI ####
+
+chromPeaks(XCMSnExp) <- XCMSnExp@msFeatureData$chromPeaks[
+   !row.names(XCMSnExp@msFeatureData$chromPeaks) %in% good_pks_id, 
+]
+chromPeakData(XCMSnExp) <- chromPeakData(XCMSnExp)[
+   !row.names(chromPeakData(XCMSnExp)) %in% good_pks_id, 
+]                                         
+
+ft <- xcms::groupChromPeaks(XCMSnExp,
+                            PeakDensityParam(
+                              c("B", "B", "S", "S", "L"),
+                              binSize = 0.05,
+                              bw = 20,
+                              minFraction = 0.4)
+                            )
+q <-xcms::quantify(ft, "maxint")
+q <- q@assays@data@listData[["raw"]]
+q[is.na(q)] <- 0
+
+fc_df <- data.frame(
+  blank_sample = log10((q[,2] + 1) / (q[,1] + 1)),
+  sample_rep = log10((q[,3] + 1) / (q[,2] + 1)),
+  labelled_sample = log10((q[,4] + 1) / (q[,2] + 1))
+)
+fc <- log10((q[,2] + 1) / (q[,1] + 1))
+hist(fc, breaks = 100, main = "No match: Sample vs Blank")
+fc <- log10((q[,3] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "No match: Sample vs Sample-Replicate")
+fc <- log10((q[,4] + 1) / (q[,2] + 1))
+hist(fc, breaks = 100, main = "No match: Labelled vs Sample")
+plot(fc_df)
+```
+
+```{r}
+candidates <- which(fc_df$blank_sample > 2 & abs(fc_df$sample_rep) < 2)
+cand_ft <- as.data.frame(featureDefinitions(ft)[candidates,])
+table(cand_ft$S)
+hist(cand_ft$mzmed, breaks = 100)
+hist(cand_ft$rtmed, breaks = 100)
+hist(cand_ft$npeaks, breaks = 100)
+```
+
+
+
+
+
+
+
+
+
+

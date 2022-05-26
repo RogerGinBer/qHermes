@@ -58,7 +58,6 @@ findROIpeaks <- function(MSnExp, ppm = 3){
 
 
 #Modified version of the internal Centwave detection that only generates ROIs
-#' @export
 centWave_orig <- function(mz, int, scantime, valsPerSpect,
                            ppm = 25, peakwidth = c(20,50), snthresh = 10,
                            prefilter = c(3,100),

@@ -42,49 +42,109 @@ mergeRHermesXCMS <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10)
 #' @param RHermesExp RHermes object
 #' @param SOI_id Index of the SOI that will be used as reference for the
 #'   matching
-#' 
-matchPeaksToSOI <- function(pks, RHermesExp, SOI_id, RTtol = 3){
+#' @importFrom RHermes SOI
+matchPeaksToSOI <- function(XCMSnExp, RHermesExp, SOI_id, RTtol = 3, quantifySOI = FALSE) {
+    pks <- as.data.frame(featureDefinitions(XCMSnExp))
     sois <- SOI(RHermesExp, SOI_id)@SOIList
     ppm <- RHermesExp@metadata@ExpParam@ppm
     
     ##Perform correspondance XCMS ChromPeak --> SOI 
     matching <- lapply(1:nrow(pks), function(i){
-            mz_range <- pks$mz[i] * c(1 - ppm * 1e-6,
+            mz_range <- pks$mzmed[i] * c(1 - ppm * 1e-6,
                                       1 + ppm * 1e-6)  
             id <- which(
                 between(sois$mass, mz_range[1], mz_range[2]) &
-                sois$start < pks$rt[i] &
-                sois$end > pks$rt[i]
+                sois$start < pks$rtmed[i] &
+                sois$end > pks$rtmed[i]
             )
             return(id)
         })
-    
-    ##Add information to ChromPeak matrix
-    # pks$soi <- NA
-    # pks$formula <- NA
-    # for(i in which(sapply(matching, length) != 0)){
-    #     # if(length(matching[[i]])==0) next
-    #     pks$soi[i] <- list(matching[[i]])
-    #     pks$formula[i] <- list(sois$formula[matching[[i]]])
-    # }
     pks$soi <- lapply(seq_along(matching), function(i){
         if(length(matching[[i]])==0){return(NA)}
         matching[[i]]
     })
+    
+    #Matching summary
+    representedSOI_ID <- na.omit(unique(unlist(pks$soi)))
+    message(length(representedSOI_ID), " out of ", nrow(sois),
+            " (", round(length(representedSOI_ID)/nrow(sois) * 100, 2),"%) ",
+            "SOIs were represented in the feature list") 
+    message(length(which(!is.na(pks$soi))), " XCMS features with SOI out of ",
+                nrow(pks))
+    
+    #Fill unmatched SOI -- Optional
+    if(quantifySOI){
+        message("Quantifying SOIs that could not be matched to a peak")
+        target_soi <- sois[-representedSOI_ID, c("start", "end", "mass")] %>%
+            mutate(mzmin = mass * (1 - 1e-6 * ppm),
+                   mzmax = mass * (1 + 1e-6 * ppm)) %>%
+            rename(rtmin = start, rtmax = end) %>%
+            select("mzmin", "mzmax", "rtmin", "rtmax")
+        
+        pdp_idx <- max(which(sapply(processHistory(XCMSnExp),
+                                    function(x){x@type == "Peak grouping"})))
+        pdp <- processHistory(XCMSnExp)[[pdp_idx]]@param
+        
+        npeak <- nrow(chromPeaks(XCMSnExp))
+        XCMSnExp <- manualChromPeaks(XCMSnExp, target_soi)
+        npeak_new <- nrow(chromPeaks(XCMSnExp))
+        chromPeakData(XCMSnExp)[seq(npeak + 1, npeak_new), "is_filled"] <- TRUE
+        XCMSnExp <- groupChromPeaks(XCMSnExp, pdp)
+        
+        pks <- as.data.frame(featureDefinitions(XCMSnExp))
+        matching <- lapply(1:nrow(pks), function(i){
+            mz_range <- pks$mzmed[i] * c(1 - ppm * 1e-6,
+                                         1 + ppm * 1e-6)  
+            id <- which(
+                between(sois$mass, mz_range[1], mz_range[2]) &
+                    sois$start < pks$rtmed[i] &
+                    sois$end > pks$rtmed[i]
+            )
+            return(id)
+        })
+        pks$soi <- lapply(seq_along(matching), function(i){
+            if(length(matching[[i]])==0){return(NA)}
+            matching[[i]]
+        })
+        
+        pks$filled <- sapply(pks$peakidx, function(id, cpd){
+            all(cpd[id, "is_filled"])
+        }, cpd = chromPeakData(XCMSnExp))
+        
+        representedSOI_ID <- na.omit(unique(unlist(pks$soi)))
+        message(length(representedSOI_ID), " out of ", nrow(sois),
+                " (", round(length(representedSOI_ID)/nrow(sois)*100, 2),"%) ",
+                "SOIs were represented in the feature list after filling")
+    } else {
+        pks$filled <- FALSE
+    }
     pks$formula <- lapply(seq_along(matching), function(i){
         if(length(matching[[i]])==0){return(NA)}
         sois$formula[matching[[i]]]
     })
+    pks$isotope <- lapply(seq_along(matching), function(i){
+        if(length(matching[[i]])==0){return(NA)}
+        return("M0")
+    })
+    #Add confirmed isotope annotations to feature list
+    if("isodf" %in% colnames(sois)){
+        for (i in which(sois$isofound != 0)){
+            iso_table <- sois$isodf[[i]]
+            for (j in 1:nrow(iso_table)){
+                mz_range <- iso_table$mass[j] * c(1 - ppm * 1e-6,
+                                                  1 + ppm * 1e-6) 
+                hits <- which(between(pks$mz, mz_range[1], mz_range[2]) &
+                                  between(pks$rt, sois$start[[i]], sois$end[[i]]))
+                pks$isotope[hits] <- iso_table$iso[[j]]
+            }
+        }
+    }
+    pks$isotope <- as.character(pks$isotope)
     pks$SOIData <- lapply(matching, function(i){
         if(length(i) == 0){return(NA)}
         sois[i,]
     })
-    
-    representedSOI_ID <- na.omit(unique(unlist(pks$soi)))
-    message(length(representedSOI_ID), " out of ", nrow(sois),
-            " (", round(length(representedSOI_ID)/nrow(sois)*100, 2),"%) ",
-            "SOIs were represented in the peak list")
-    return(pks)
+    return(list(XCMSnExp, pks))
 }
 
 retrieveMS2Info <- function(pks, RHermesExp, MS2ExpID, RTtol = 10){
@@ -93,11 +153,11 @@ retrieveMS2Info <- function(pks, RHermesExp, MS2ExpID, RTtol = 10){
     matching <- lapply(1:nrow(pks), function(i){
         # mz_range <- pks$mz[i] * c(1 - ppm * 1e-6,
         #                           1 + ppm * 1e-6)  
-        mz_range <- c(pks$mz[i] - 0.2,
-                      pks$mz[i] + 0.2)  
+        mz_range <- c(pks$mzmed[i] - 0.2,
+                      pks$mzmed[i] + 0.2)  
         id <- which(
             between(MS2Features$precmass, mz_range[1], mz_range[2]) &
-                abs(MS2Features$apex - pks$rt[i]) < RTtol
+                abs(MS2Features$apex - pks$rtmed[i]) < RTtol
         )
         return(id)
     })
@@ -120,6 +180,12 @@ retrieveMS2Info <- function(pks, RHermesExp, MS2ExpID, RTtol = 10){
         } else {
             return("No available ID")
     }})
+    message(length(which(!is.na(pks$soi) & pks$foundMS2)),
+            " XCMS features with SOI and MS2")
+    message("   - Of which ",
+            length(which(!pks$putativeID[!is.na(pks$soi) & pks$foundMS2] %in%
+                             c("No significant hits", "Missing reference spectra"))),
+            " have a putative ID")
     return(pks)
 }
 
@@ -199,33 +265,25 @@ calculate_MS2_correlation_from_feature <- function(feature_df){
 
 #' @importFrom xcms featureDefinitions
 #' @export
-mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTtol = 10){
-    pks <- as.data.frame(featureDefinitions(XCMSnExp))
-    
-    pks <- rename(pks, mz = mzmed, rt = rtmed)
-    
+annotateFeaturesFromList <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA,
+                             RTtol = 10, filter = TRUE,
+                             quantifyMissingSOI = FALSE){
+
     #Match XCMS features with SOIs
-    pks <- matchPeaksToSOI(pks, RHermesExp, SOI, RTtol)
-    message(length(which(!is.na(pks$soi))), " XCMS features with SOI")
+    output <- matchPeaksToSOI(XCMSnExp, RHermesExp, SOI, RTtol, quantifySOI = quantifyMissingSOI)
+    XCMSnExp <- output[[1]]
+    pks <- output[[2]]
+    
+    #Filter all features without matching SOI
+    if(filter) pks <- subset(pks, !is.na(pks$soi))
     
     #Extract MS2 information and match with features
     if(!is.na(MS2Exp)){
-        pks <- subset(pks, !is.na(pks$soi))
         pks <- retrieveMS2Info(pks, RHermesExp, MS2Exp, RTtol)
         # message(length(which(pks$foundMS2)), " XCMS peaks with MS2")
-        message(length(which(!is.na(pks$soi) & pks$foundMS2)),
-                " XCMS features with SOI and MS2")
-        message("   - Of which ",
-                length(which(!pks$putativeID[!is.na(pks$soi) & pks$foundMS2] %in%
-                                 c("No significant hits", "Missing reference spectra"))),
-                " have a putative ID")
+
     }
-    
-    #Filter all features without matching SOI
-    pks <- subset(pks, !is.na(pks$soi))
-    
-    pks <- rename(pks, mzmed = mz, rtmed = rt)
-    
+
     #Update XCMSnExp object
     class(pks$peakidx) <- "list"
     # class(pks$soi) <- "numeric"
@@ -234,3 +292,30 @@ mergeRHermesXCMSFeatures <- function(XCMSnExp, RHermesExp, SOI, MS2Exp = NA, RTt
     return(XCMSnExp)
 }
 
+#'@export
+annotateFeatures <- function(XCMSnExp, ChemFormulaParam, filter = TRUE){
+    #Match XCMS features with annotation
+    feature <- featureDefinitions(XCMSnExp)
+    pks <- .matchPeaksCFP(feature, ChemFormulaParam)
+
+    #Filter all features without matching annotation
+    if(filter) pks <- subset(pks, !sapply(pks$anot, is.null))
+    
+    #Update XCMSnExp object
+    featureDefinitions(XCMSnExp) <- S4Vectors::DataFrame(pks)
+    return(XCMSnExp)
+}
+
+.matchPeaksCFP <- function(feature, ChemFormulaParam){
+    ppm <- ChemFormulaParam@ppm
+    ionf <- ChemFormulaParam@ionFormulas
+    ionf <- ionf[order(ionf$m),]
+    match <- vector("list", nrow(feature))
+    for(i in 1:nrow(feature)){
+        mz <- feature$mzmed[[i]]
+        anot <- ionf$f[RHermes:::binarySearch(matrix(ncol = 1, ionf$m), mz, ppm)]
+        if(length(anot)) match[[i]] <- anot
+    }
+    feature$anot <- match
+    return(S4Vectors::DataFrame(feature))
+}
