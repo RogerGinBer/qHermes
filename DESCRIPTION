@@ -1,6 +1,6 @@
 Package: qHermes
 Title: Integrating the HERMES identification with the XCMS quantification
-Version: 0.0.0.9002
+Version: 0.0.0.9003
 Authors@R: 
     c(person(given = "Roger",
            family = "Gine",

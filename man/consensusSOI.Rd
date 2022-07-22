@@ -28,7 +28,7 @@ are available in order to reduce the number of SOIs and ensure only
 consistent signals are included into the inclusion list.
 }
 \examples{
-if(F){
+if(FALSE){
  #Find SOIs common in at least two of the three selected SOI lists
  consensusSOI(RHermesExp, 1:3, 2) 
 }
