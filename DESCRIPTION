@@ -35,5 +35,7 @@ Suggests:
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)
+Remotes: 
+    RogerGinBer/RHermes
 VignetteBuilder: knitr
 Config/testthat/edition: 3
