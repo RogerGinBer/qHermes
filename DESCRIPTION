@@ -1,14 +1,15 @@
 Package: qHermes
 Title: Integrating the HERMES identification with the XCMS quantification
-Version: 0.0.0.9000
+Version: 0.0.0.9001
 Authors@R: 
     c(person(given = "Roger",
            family = "Gine",
            role = c("aut", "cre"),
-           email = "roger.gine@estudiants.urv.cat"),
+           email = "roger.gine@estudiants.urv.cat",
+           comment = c(ORCID = "0000-0003-0288-9619")),
       person(given = "Johannes",
            family = "Rainer",
-           role = "aut",
+           role = "ctb",
            email = "johannes.rainer@eurac.edu",
            comment = c(ORCID = "0000-0002-6977-7147")))
 Description: What the package does (one paragraph).
@@ -16,7 +17,7 @@ License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.2
+RoxygenNote: 7.2.0
 Imports:
     xcms,
     RHermes,
@@ -26,7 +27,10 @@ Imports:
     mzR,
     BiocParallel,
     MSnbase,
-    MetaboCoreUtils
+    SummarizedExperiment,
+    enviPat,
+    MetaboCoreUtils,
+    S4Vectors
 Suggests: 
     knitr,
     rmarkdown,
