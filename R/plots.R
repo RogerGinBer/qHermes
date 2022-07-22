@@ -2,7 +2,7 @@
 #'@export
 plotFeature <- function(XCMSnExp, feature, soi = NULL){
     cp <- chromPeaks(XCMSnExp)
-    cpdata <- chromPeakData(XCMSnExp)%>% as.data.frame
+    cpdata <- chromPeakData(XCMSnExp) %>% as.data.frame
     if(is.null(soi)){
         ft <- featureDefinitions(XCMSnExp)[feature,] %>% as.data.frame
         pks <- cpdata[ft$peakidx[[1]], ] 

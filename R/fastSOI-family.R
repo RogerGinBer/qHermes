@@ -1,3 +1,5 @@
+#### fastSOI-related ####
+
 #' @title fastSOI
 #' @description A new implementation of SOI detection algorithm that avoids the
 #'   datapoint abstraction.
@@ -10,10 +12,14 @@
 #' @param minint Minimum intensity of the scans used in the calculated XICs.
 #'   Defaults to 1000.
 #' @importFrom xcms chromPeaks chromPeakData
-#' @importFrom dplyr select rename
-#' @importFrom BiocParallel SerialParam
+#' @importFrom dplyr select rename filter
+#' @importFrom BiocParallel SerialParam bpparam bplapply
+#' @importFrom MSnbase fileNames filterFile
+#' @importFrom xcms chromPeaks chromPeakData
+#' @importFrom S4Vectors DataFrame
 #' @export
-fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30)){
+fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000,
+                    peakwidth = c(5, 30)){
     ppm <- ChemFormulaParam@ppm
     ionf <- ChemFormulaParam@ionFormulas
     message("Calculating fast SOIs")
@@ -24,8 +30,8 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30
     files <- fileNames(MSnExp)
     SOIs <- bplapply(seq_along(files), function(i) {
         message("Current file: ", files[i], " ", Sys.time())
-        cur_MSnExp <- MSnbase::filterFile(MSnExp, i)
-        pks <- qHermes:::extractToHermes(cur_MSnExp)
+        cur_MSnExp <- filterFile(MSnExp, i)
+        pks <- extractToHermes(cur_MSnExp)
         mzs <- pks[[3]]$mz
         ints <- pks[[3]]$rtiv
         
@@ -43,7 +49,7 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30
                             as.integer(length(scanindex)),
                             PACKAGE = "xcms")
             if(all(eic$intensity < minint)){return()}
-            sois <- qHermes:::soi_from_eic(eic$intensity)
+            sois <- soi_from_eic(eic$intensity)
             if(nrow(sois) == 0){return()}
             sois <- as.data.frame(sois)
             
@@ -63,10 +69,10 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30
         })
         if(is.null(SL)){return()}
         SL <- do.call("rbind", SL)
-        SL <- dplyr::filter(SL, length >= peakwidth[1])
+        SL <- filter(SL, length >= peakwidth[1])
         suppressMessages({SL <- groupShort(SL, maxlen = peakwidth[2])})
-        SL <- dplyr::rename(SL, rtmin = start, rtmax = end, mz = mass)
-        SL <- dplyr::filter(SL, length >= peakwidth[1])
+        SL <- rename(SL, rtmin = start, rtmax = end, mz = mass)
+        SL <- filter(SL, length >= peakwidth[1])
         SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-6)
         SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-6)
         SL$into <- sapply(SL$peaks, function(x){sum(x[,2])})
@@ -95,29 +101,55 @@ fastSOI <- function(MSnExp, ChemFormulaParam, minint = 1000, peakwidth = c(5, 30
     return(MSnExp)
 }
 
-## Internal function, similar to ROI detection in XCMS, but with a scan gap
+## soi_from_eic: similar to ROI detection in XCMS, but with a scan gap
 ## tolerance implemented.
 
 soi_from_eic <- function(eic, thr = 1000, tol = 5){
-  above <- which(eic > thr)
-  if(length(above) == 0){return(matrix(nrow=0,ncol=2))}
-  m <- diff(above) < tol
-  in_soi <- F
-  st <- c()
-  end <- c()
-  for(i in seq_along(m)){
-    if(m[i] & !in_soi){
-      st <- c(st, above[i])
-      in_soi <- T
-    } else if(!m[i] & in_soi){
-      end <- c(end, above[i])
-      in_soi <- F
+    above <- which(eic > thr)
+    if (length(above) == 0) 
+        return(matrix(nrow = 0, ncol = 2))
+    m <- diff(above) < tol
+    in_soi <- FALSE
+    st <- c()
+    end <- c()
+    for (i in seq_along(m)) {
+        if (m[i] & !in_soi) {
+            st <- c(st, above[i])
+            in_soi <- TRUE
+        } else if (!m[i] & in_soi) {
+            end <- c(end, above[i])
+            in_soi <- FALSE
+        }
     }
-  }
-  if(in_soi){end <- c(end, above[i])}
-  if(length(st) == 0 | length(end) == 0){return(matrix(nrow=0,ncol=2))}
-  return(cbind(scstart = st, scend = end))
+    if (in_soi)
+        end <- c(end, above[i])
+    if (length(st) == 0 | length(end) == 0)
+        return(matrix(nrow = 0, ncol = 2))
+    return(cbind(scstart = st, scend = end))
 }
+
+
+#'@importFrom MSnbase extractSpectraData
+#'@importFrom data.table rbindlist
+extractToHermes <- function(MSnExp){
+    df <- extractSpectraData(MSnExp)
+    h <- as.data.frame(df[, 1:35])
+    names(h)[names(h) == "rtime"] <- "retentionTime"
+    
+    #This is a bit slow, any ideas to speed it up?
+    pks <- rbindlist(lapply(1:nrow(df), function(x){
+        data.table(mz = df$mz[[x]],
+                   rtiv = df$intensity[[x]],
+                   rt = df$rtime[x])
+    }))
+    
+    #To match with the expected format of RHermes: list(raw, header, filtered)
+    return(list(pks, h, pks))
+}
+
+
+# Internally edefine groupShort so that it does not run centWave peak-picking
+# (time consuming)
 
 groupShort <- function(Groups, maxlen){
   message("Shortening and selecting long groups:")
@@ -127,10 +159,6 @@ groupShort <- function(Groups, maxlen){
   LG <- do.call(rbind, LG)
   return(rbind(SG, LG))
 }
-
-
-#Experimental Centwave approach to SOI partitioning
-
 parallelGroupShort <- function(i, LG, maxlen){
   ms1data <- LG$peaks[[i]]
   curGR <- LG[i,]
@@ -152,28 +180,7 @@ parallelGroupShort <- function(i, LG, maxlen){
 }
 
 
-
-
-
-#'@export
-filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
-    cp <- chromPeaks(XCMSnExp)
-    cpdata <- chromPeakData(XCMSnExp)
-    SL <- SOI(RHermesExp, SOI_id)@SOIList
-    unique_ions <- unique(SL$formula)
-    toRemove <- rep(TRUE, nrow(cpdata))
-    FALSE -> toRemove[sapply(cpdata$formula, function(x){x %in% unique_ions})]
-    for(i in which(!toRemove)){
-        matching_sois <- filter(SL, formula == cpdata$formula[[i]])
-        good <- (cp[i, "rtmin"] > matching_sois$start - 20) &
-                (cp[i, "rtmax"] < matching_sois$end + 20)
-        if(!any(good)) toRemove[i] <- TRUE
-    }
-    chromPeaks(XCMSnExp) <- cp[!toRemove,]
-    chromPeakData(XCMSnExp) <- cpdata[!toRemove,]
-    return(XCMSnExp)
-}
-
+#### fastSOIfromList-related ####
 
 #' @title fastSOIfromList
 #' @description Quantify SOIs in multiple files using an RHermes SOI list as a
@@ -181,23 +188,21 @@ filterSOIFromTemplate <- function(XCMSnExp, RHermesExp, SOI_id){
 #' @details The function uses the fastSOI approach to quickly detect SOIs in
 #'   multiple files using a target list of all SOIs in a given RHermesExp
 #'   SOIList.
-#' @param MSnExp
-#' @param struct
-#' @param SOI_id
-#' @param rtwin
-#' @param tol
-#' @param thr
+#' @inheritParams fastSOI
+#' @inheritParams annotateFeaturesFromList
+#' @param tol Numeric. Gap (datapoints with <thr intensity) tolerance. 
+#' @param thr Numeric. Intensity threshold for signal detection.
 #'@export
-fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3, 
+fastSOIfromList <- function (MSnExp, RHermesExp, SOI_id = 1, RTtol = 3, tol = 3, 
                                 thr = 1000) {
-    ppm <- struct@metadata@ExpParam@ppm
-    target_list <- RHermes::SOI(struct,SOI_id)@SOIList
+    ppm <- RHermesExp@metadata@ExpParam@ppm
+    target_list <- RHermes::SOI(RHermesExp, SOI_id)@SOIList
     target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
     target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
     files <- fileNames(MSnExp)
     SOIs <- bplapply(seq_along(files), single_fastSOI_from_list,
                      MSnExp = MSnExp, target_list = target_list, ppm = ppm,
-                     rtwin = rtwin, tol = tol, thr = thr, files = files,
+                     rtwin = RTtol, tol = tol, thr = thr, files = files,
                      BPPARAM = bpparam()
     )
     SOIs <- do.call("rbind", SOIs)
@@ -214,15 +219,15 @@ fastSOIfromList <- function (MSnExp, struct, SOI_id = 1, rtwin = 3, tol = 3,
         chromPeakData(MSnExp) <- S4Vectors::DataFrame(
             SOIs[, c("rtmin", "peaks", "sample", "SOIidx", "formula")],
             ms_level = rep(as.integer(1), times=nrow(SOIs)),
-            is_filled = rep(FALSE, times=nrow(SOIs)),
+            is_filled = rep(FALSE, times = nrow(SOIs)),
             row.names = seq(nrow(SOIs))
         )
     }
     return(MSnExp)
 }
 
-fastSOIfromDF <- function (MSnExp, target_list, ppm = 5, SOI_id = 1, rtwin = 3, tol = 3, 
-                             thr = 1000) {
+fastSOIfromDF <- function (MSnExp, target_list, ppm = 5, SOI_id = 1, rtwin = 3,
+                           tol = 3, thr = 1000) {
   target_list$mmin <- target_list$mass * (1 - ppm * 1e-06)
   target_list$mmax <- target_list$mass * (1 + ppm * 1e-06)
   files <- fileNames(MSnExp)
@@ -242,9 +247,9 @@ fastSOIfromDF <- function (MSnExp, target_list, ppm = 5, SOI_id = 1, rtwin = 3, 
     row.names(cp_mat) <- seq(nrow(SOIs))
     chromPeaks(MSnExp) <- cp_mat
     chromPeakData(MSnExp) <- S4Vectors::DataFrame(
-      ms_level = rep(as.integer(1), times=nrow(SOIs)),
-      is_filled = rep(TRUE, times=nrow(SOIs)),
-      row.names = seq(nrow(SOIs))
+        ms_level = rep(as.integer(1), times = nrow(SOIs)),
+        is_filled = rep(TRUE, times = nrow(SOIs)),
+        row.names = seq(nrow(SOIs))
     )
   }
   return(MSnExp)
@@ -286,15 +291,15 @@ single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol, th
                         rtiv = eic$intensity[row[1]:row[2]])
         })
         sois$mass <- tgt$mass
-        sois <- dplyr::select(sois, start, rt, end, length, formula, 
-                              peaks, mass)
+        sois <- sois[, c("start", "rt", "end", "length", "formula", "peaks",
+                         "mass")]
         sois$SOIidx <- rep(x, times = nrow(sois))
         sois$nscans <- sl
         return(sois)
     })
     if (is.null(SL)) {return()}
     SL <- do.call("rbind", SL)
-    SL <- dplyr::rename(SL, rtmin = start, rtmax = end, mz = mass)
+    SL <- rename(SL, rtmin = start, rtmax = end, mz = mass)
     SL$mzmin <- as.numeric(SL$mz) * (1 - ppm * 1e-06)
     SL$mzmax <- as.numeric(SL$mz) * (1 + ppm * 1e-06)
     SL$into <- sapply(SL$peaks, function(x) {sum(x[, 2])})
@@ -304,123 +309,114 @@ single_fastSOI_from_list <- function(i, MSnExp, target_list, ppm, rtwin, tol, th
     return(SL)
 }
 
+#' @title filterSOIByIL
+#' @description Filter a SOI list and keep only those SOIs that were included in
+#'   the inclusion list.
+#' @details The rationale of this function is that one usually wants to quantify
+#'   only those signals for which he has acquired MS2 data.
+#' @inheritParams annotateFeaturesFromList
+#' @param IL_id Numeric. Index of the inclusion list that will be used to filter the SOIs.
+
+#' @importFrom RHermes SOI IL 
 #'@export
-SOIfiltbyILv1 <- function(IL, SOIList, par){
-    # SOIList as SOI@SOIList
-    # IL as full IL() object
-    ILanot <- IL@annotation
-    filt <- unlist(sapply(seq_along(ILanot),function(i){
-        a <- ILanot[[i]]
-        r <- unlist(sapply(seq(nrow(a)),function(j){
-            y <- a[j,]
-            which(SOIList$start==y$start &
-                      SOIList$end==y$end &
-                      SOIList$mass==y$mass )
-        }))
-        # This can be avoided once OriginalSOI index is corrected
-        if(length(r)>0){ 
-            return(r)  
-        }else{return()}
+filterSOIByIL <- function(RHermesExp, SOI_id, IL_id){
+    ILanot <- IL(RHermesExp, IL_id)@annotation
+    SOIList <- SOI(RHermesExp, SOI_id)@SOIList
+    filt <- unlist(sapply(seq_along(ILanot), function(i) {
+        inclusionGroup <- ILanot[[i]]
+        SOI_number <- inclusionGroup$metadata[[1]]$originalSOI
+        return(unique(as.numeric(SOI_number)))
     }))
-    soifilt <- SOIList[unique(filt),]
-    return(soifilt)
+    RHermesExp@data@SOI[[SOI_id]]@SOIList <- SOIList[unique(filt), ]
+    return(RHermesExp)
 }
 
-SOIfiltbyILv2 <- function(IL,SOIList,par){
-    # This function is for when OriginalSOI index is corrected
-    # should add a flag if IL SOIid does not match 
-    ILanot <- IL@annotation
-    filt <- unlist(sapply(seq(length(ILanot)),function(i){
-        a <- ILanot[[i]]
-        r <- a$metadata[[1]]$originalSOI
-        r <- unique(as.numeric(r))
-            return(r)  
-    }))
-    soifilt <- SOIList[unique(filt),]
-    return(soifilt)
-    # nsoi <- length(RHermesExp@data@SOI)
-    # RHermesExp@data@SOI[[nsoi+1]] <- RHermesExp@data@SOI[[nsoi]]
-    # RHermesExp@data@SOI[[nsoi+1]]@SOIList <- RES
-    # return(RHermesExp)
-}
 
 
 # usage
 # MsnExp  <- readMSData (XXXXX) - Raw data onDisk of qHermes files
 # cwp <- CentWaveParam() - peakwidth always c(5,30)?
 # rtp <-  ObiwarpParam() - Indicate centersample?
-#'@export
-getCorrectMatrix <- function(MsnExp, cwp, rtp){
-    MsnExp <- findChromPeaks(MsnExp, param = cwp)
-    MsnExp <- adjustRtime(MsnExp, param = rtp)
-    
-    rtRaw <- rtime(MsnExp, bySample = TRUE,adjusted=F)
-    rtAdj <- rtime(MsnExp, bySample = TRUE,adjusted=T)
-    rtr <- rtRaw[[1]] #raw data instrumeant scan rate
-    stepRt <- round(min(diff(rtr)),1) #+0.1
-    rtmax <- ceiling(max(unlist(rtRaw)))
-    tpoints <- seq(0,rtmax,stepRt)
-    xpfiles <- fileNames(MsnExp)
-    
-    rtCorr <- lapply(seq(xpfiles),function(i){
-        rta <- rtAdj[[i]]
-        rtr <- rtRaw[[i]]
-        r <- sapply(tpoints,function(j){
-            minj <- j-stepRt
-            idx <- which(rtr>=minj & rtr<j)
-            if(length(idx)==0){
-                return(c(j,0))
-            }else{
-                rtdif <- median(rta[idx]-rtr[idx])
-                return(c(j,rtdif))
-                # rtdif is the value to be subtracted 
-                # to raw RT to match corrected RT
-                # rtAdj = rtRaw + rtdif
-            }
-        })
-        r <- t(r)
-        r
-    })
-    ## there is still some gaps
-    ## need to do some imputation before application to qHermes
-    idx <- seq(rtCorr)
-    idx <- idx[-rtp@centerSample]
-    for(i in idx){
-        rtc <- rtCorr[[i]]
-        rt0 <- which(rtc[,2]==0)
-        rt0 <- rt0[which(rt0>1 & rt0<nrow(rtc))]
-        for(j in rt0){
-            a <- j-1
-            if(a %in% rt0){
-                while(a %in% rt0){
-                    a <- a-1
-                    if(a==0){next}
-                }
-            }
-            b <- j+1
-            if(b %in% rt0){
-                while(b %in% rt0){
-                    b <- b+1
-                    if(b==0){next}
-                }
-            }
-            a <- rtc[a,]
-            b <- rtc[b,]
-            #impute
-            D1 <- sqrt(((b[2]-a[2])^2)+((b[1]-a[1])^2))
-            rtc[j,2] <- (a[2]+(((b[1]-a[1])/D1)*(b[2]-a[2])))
-        }
-        rtCorr[[i]] <- rtc
-    }
-    return(rtCorr)
-}
+# #'@export
+# getCorrectMatrix <- function(MsnExp, cwp, rtp){
+#     MsnExp <- findChromPeaks(MsnExp, param = cwp)
+#     MsnExp <- adjustRtime(MsnExp, param = rtp)
+#     
+#     rtRaw <- rtime(MsnExp, bySample = TRUE, adjusted = FALSE)
+#     rtAdj <- rtime(MsnExp, bySample = TRUE, adjusted = TRUE)
+#     rtr <- rtRaw[[1]] #raw data instrumeant scan rate
+#     stepRt <- round(min(diff(rtr)), 1) #+0.1
+#     rtmax <- ceiling(max(unlist(rtRaw)))
+#     tpoints <- seq(0, rtmax, stepRt)
+#     xpfiles <- fileNames(MsnExp)
+#     
+#     rtCorr <- lapply(seq(xpfiles), function(i) {
+#         rta <- rtAdj[[i]]
+#         rtr <- rtRaw[[i]]
+#         r <- sapply(tpoints, function(j) {
+#             minj <- j - stepRt
+#             idx <- which(rtr >= minj & rtr < j)
+#             if (length(idx) == 0) {
+#                 return(c(j, 0))
+#             } else {
+#                 rtdif <- median(rta[idx] - rtr[idx])
+#                 return(c(j, rtdif))
+#                 # rtdif is the value to be subtracted
+#                 # to raw RT to match corrected RT
+#                 # rtAdj = rtRaw + rtdif
+#             }
+#         })
+#         r <- t(r)
+#         r
+#     })
+#     ## there is still some gaps
+#     ## need to do some imputation before application to qHermes
+#     idx <- seq(rtCorr)
+#     idx <- idx[-rtp@centerSample]
+#     for (i in idx) {
+#         rtc <- rtCorr[[i]]
+#         rt0 <- which(rtc[,2] == 0)
+#         rt0 <- rt0[which(rt0 > 1 & rt0 < nrow(rtc))]
+#         for (j in rt0) {
+#             a <- j - 1
+#             if (a %in% rt0) {
+#                 while(a %in% rt0){
+#                     a <- a - 1
+#                     if (a == 0) {next}
+#                 }
+#             }
+#             b <- j + 1
+#             if (b %in% rt0) {
+#                 while (b %in% rt0) {
+#                     b <- b + 1
+#                     if (b == 0) {
+#                         next
+#                     }
+#                 }
+#             }
+#             a <- rtc[a, ]
+#             b <- rtc[b, ]
+#             #impute
+#             D1 <- sqrt(((b[2] - a[2]) ^ 2) + ((b[1] - a[1]) ^ 2))
+#             rtc[j, 2] <- (a[2] + (((b[1] - a[1]) / D1) * (b[2] - a[2])))
+#         }
+#         rtCorr[[i]] <- rtc
+#     }
+#     return(rtCorr)
+# }
 
-#' @export
-SOIFeatureDefinitions <- function(object){
-  def <- featureDefinitions(object) %>% as.data.frame()
-  pk_data <- chromPeakData(object) %>% as.data.frame()
-  def$formula <- lapply(def$peakidx, function(id){pk_data$formula[id[1]]})
-  def$anot <- lapply(def$peakidx, function(id){pk_data$anot[id[1]]})
-  def <- cbind(def, featureValues(object, value = "maxo") %>% as.data.frame())
-  return(def)
-}
+# #' @export
+# SOIFeatureDefinitions <- function(object){
+#     def <- featureDefinitions(object) %>% as.data.frame()
+#     pk_data <- chromPeakData(object) %>% as.data.frame()
+#     def$formula <-
+#         lapply(def$peakidx, function(id) {
+#             pk_data$formula[id[1]]
+#         })
+#     def$anot <- lapply(def$peakidx, function(id) {
+#         pk_data$anot[id[1]]
+#     })
+#     def <-
+#         cbind(def, featureValues(object, value = "maxo") %>% as.data.frame())
+#     return(def)
+# }

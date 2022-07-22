@@ -1,10 +1,11 @@
+#' @importFrom xcms filterFile 
 extractEICDataFromPeaks <- function(XCMSnExp, PeakMatrix){
     # if(is(XCMSnExp, "XCMSnExp")) XCMSnExp <- as(XCMSnExp, "MSnExp")
     
     all_eics <- lapply(unique(PeakMatrix$sample), function(i){
         curPeakMatrix <- filter(PeakMatrix, sample == i)
         cur_MSnExp <- xcms::filterFile(XCMSnExp, i)
-        raw_data <- qHermes:::extractToHermes(cur_MSnExp)
+        raw_data <- extractToHermes(cur_MSnExp)
         mzs <- unlist(raw_data[[3]][, 1])
         ints <- unlist(raw_data[[3]][, 2])
         h <- raw_data[[2]]
@@ -34,9 +35,10 @@ extractEICDataFromPeaks <- function(XCMSnExp, PeakMatrix){
 eic_sim <- function(eic1, eic2){
     eic1 <- bin_eic(eic1)
     eic2 <- bin_eic(eic2)
-    RHermes:::cosineSim(eic1,eic2)
+    RHermes:::cosineSim(eic1, eic2)
 }
 
+#' @importFrom dplyr group_by summarise mutate
 bin_eic <- function(eic, bwidth = 1){
     bin_breaks <- seq(floor(min(eic$rt)) - 5,
                       ceiling(max(eic$rt)) + 5,

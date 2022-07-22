@@ -12,13 +12,14 @@
 #'  are available in order to reduce the number of SOIs and ensure only
 #'  consistent signals are included into the inclusion list.
 #'@examples 
-#'if(F){
+#'if(FALSE){
 #'  #Find SOIs common in at least two of the three selected SOI lists
 #'  consensusSOI(RHermesExp, 1:3, 2) 
 #' }
 #'@export
-#'@importFrom data.table rbindlist
+#'@importFrom data.table rbindlist data.table setkey as.data.table
 #'@importFrom dplyr mutate
+#'@importFrom RHermes RHermesSOI SOIParam
 consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
     if(length(SOIids) == 1){stop("Can't run consensus with a single SOI list")}
     if(is.null(minSOI)){
@@ -30,7 +31,7 @@ consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
         stop("minSOI value too large, please select a valid value for minSOI")
     }
     slist <- lapply(SOIids, SOI, struct = RHermesExp)
-    sdf <- lapply(seq(length(slist)), function(x, id){
+    sdf <- lapply(seq_along(slist), function(x, id){
         r <- slist[[x]]@SOIList
         r$soiN <- id[x]
         return(r)
@@ -42,15 +43,15 @@ consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
     )
     
     message("Calculating consensus SOIs")
-    RES <- lapply(seq(nrow(sdf)),function(x) return())
+    RES <- vector(mode = "list", length = nrow(sdf))
     exlist <- c()
-    for(i in seq(nrow(sdf))){
-        if(i %in% exlist){next}
+    for (i in seq(nrow(sdf))) {
+        if (i %in% exlist) next
         x <- sdf[i,]
         idx <- which(abs(sdf$apex - x$apex) < rtwin & sdf$formula == x$formula)
-        if(any(idx %in% exlist)) {idx <- idx[-which(idx %in% exlist)]}
+        if (any(idx %in% exlist)) {idx <- idx[-which(idx %in% exlist)]}
         usoi <- sdf[idx,]
-        if(length(unique(usoi$soiN)) >= minSOI){
+        if (length(unique(usoi$soiN)) >= minSOI) {
             newsoi <- usoi[which.max(usoi$MaxInt),]
             newsoi$start <- min(usoi$start) #mean?
             newsoi$end <- max(usoi$end) #mean?
@@ -64,11 +65,11 @@ consensusSOI <- function(RHermesExp, SOIids, minSOI = NULL, rtwin = 5){
             RES[[i]] <- newsoi
         }
     }
-    RES <- data.table::rbindlist(RES, fill = TRUE)
+    RES <- rbindlist(RES, fill = TRUE)
     
     message("Recalculating SOI plotting dataframe")
-    RES <- data.table::data.table(RES) 
-    data.table::setkey(RES,formula)
+    RES <- data.table(RES) 
+    setkey(RES, formula)
     plist <- lapply(unique(RES$formula), RHermes:::preparePlottingDF, RES)
     plist <- do.call(rbind, plist)
     plist$isov <- rep("M0", nrow(plist))    

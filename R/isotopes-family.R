@@ -1,3 +1,5 @@
+#### isotopic fidelity-related ####
+
 #' @importFrom enviPat check_chemform isowrap
 #' @importFrom xcms featureDefinitions featureSpectra
 #' @importFrom MetaboCoreUtils standardizeFormula
@@ -46,27 +48,30 @@ featureFidelity <- function(XCMSnExp){
 
 .erfc <- function(x) 2 * pnorm(x * sqrt(2), lower.tail = FALSE)
 
+#### Isotopic labelling quantification ####
 
 #'@importFrom MSnbase filterFile
-isoLabelling <- function(XCMSnExp, labelled_files, unlabelled_file){
+isoLabelling <- function(XCMSnExp,
+                         labelled_files,
+                         unlabelled_file) {
     targetFeatures <- featureDefinitions(XCMSnExp)
-    targetFeatures$M0 <- featureValues(XCMSnExp, "maxint", value = "maxo")[,unlabelled_file[1]]
+    targetFeatures$M0 <-
+        featureValues(XCMSnExp, "maxint", value = "maxo")[, unlabelled_file[1]]
     labXCMS <- filterFile(XCMSnExp, labelled_files)
     featData <- featureData(labXCMS)@data
     featData$spectrum <- seq(nrow(featData))
-    res <- apply(targetFeatures, 1, function(feat){
-        idx <- sapply(order(labelled_files), function(f){
-            cur <- featData[featData$fileIdx == f,]
+    res <- apply(targetFeatures, 1, function(feat) {
+        idx <- sapply(order(labelled_files), function(f) {
+            cur <- featData[featData$fileIdx == f, ]
             cur$spectrum[which.min(abs(cur$retentionTime - feat[["rtmed"]]))]
         })
         spec <- spectra(labXCMS[idx])
         spec <- spec[order(idx)]
-        spec <- lapply(spec, function(sp){
-            data.frame(mz=sp@mz, intensity=sp@intensity)
+        spec <- lapply(spec, function(sp) {
+            data.frame(mz = sp@mz,
+                       intensity = sp@intensity)
         })
         frc <- sapply(spec, .calculateEnrichment, feature = feat)
-        # print(frc)
-        message(round(frc,3), ", ", round(feat[["mzmed"]]), ", ", round(feat[["rtmed"]]))
         frc
     })
     matrix(res, ncol = length(labelled_files), byrow = TRUE)
