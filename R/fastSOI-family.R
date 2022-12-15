@@ -324,7 +324,7 @@ filterSOIByIL <- function(RHermesExp, SOI_id, IL_id){
     SOIList <- SOI(RHermesExp, SOI_id)@SOIList
     filt <- unlist(sapply(seq_along(ILanot), function(i) {
         inclusionGroup <- ILanot[[i]]
-        SOI_number <- inclusionGroup$metadata[[1]]$originalSOI
+        SOI_number <- sapply(inclusionGroup$metadata,function(x) unique(x$originalSOI))
         return(unique(as.numeric(SOI_number)))
     }))
     RHermesExp@data@SOI[[SOI_id]]@SOIList <- SOIList[unique(filt), ]
