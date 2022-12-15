@@ -325,12 +325,12 @@ filterSOIByIL <- function(RHermesExp, SOI_id, IL_id){
     filt <- unlist(sapply(seq_along(ILanot), function(i) {
         inclusionGroup <- ILanot[[i]]
         SOI_number <- sapply(inclusionGroup$metadata,function(x) unique(x$originalSOI))
+        SOI_number <- unlist(SOI_number)
         return(unique(as.numeric(SOI_number)))
     }))
     RHermesExp@data@SOI[[SOI_id]]@SOIList <- SOIList[unique(filt), ]
     return(RHermesExp)
 }
-
 
 
 # usage
