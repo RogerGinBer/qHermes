@@ -148,8 +148,8 @@ matchPeaksToSOI <- function(XCMSnExp, RHermesExp, SOI_id, RTtol = 3, quantifySOI
             for (j in seq_len(nrow(iso_table))){
                 mz_range <- iso_table$mass[j] * c(1 - ppm * 1e-6,
                                                   1 + ppm * 1e-6) 
-                hits <- which(between(pks$mz, mz_range[1], mz_range[2]) &
-                              between(pks$rt, sois$start[[i]], sois$end[[i]]))
+                hits <- which(between(pks$mzmed, mz_range[1], mz_range[2]) &
+                              between(pks$rtmed, sois$start[[i]], sois$end[[i]]))
                 pks$isotope[hits] <- iso_table$iso[[j]]
             }
         }
